@@ -1,7 +1,10 @@
+import 'package:camera_app/app_storage.dart';
+import 'package:camera_app/provider/camera_provider.dart';
+import 'package:camera_app/screens/camera_screen.dart';
+import 'package:camera_app/view/home.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
-import 'package:hive/hive.dart';
-import 'package:hive_flutter/adapters.dart';
+import 'package:provider/provider.dart';
 
 void main() async {
   //aync işlemler için gerekli
@@ -9,14 +12,16 @@ void main() async {
   //dil paketini başlat
   await EasyLocalization.ensureInitialized();
   // hive başlat
-  await Hive.initFlutter();
-  await Hive.openBox('settingsBox');
+  await AppStorage.appStorageInitialize();
   runApp(
     EasyLocalization(
       supportedLocales: const [Locale('tr'), Locale('en')],
       path: "assets/translations",
       fallbackLocale: const Locale('tr'),
-      child: const MyApp(),
+      child: MultiProvider(
+        providers: [ChangeNotifierProvider(create: (_) => CameraProvider())],
+        child: const MyApp(),
+      ),
     ),
   );
 }
@@ -36,11 +41,7 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      home: const Scaffold(
-        body: Center(
-          child: Text("Altyapı Hazır!"),
-        ),
-      ),
+      home: CameraScreen(),
     );
   }
 }
