@@ -1,5 +1,5 @@
-import 'package:camera_app/app_storage.dart';
-import 'package:camera_app/provider/camera_provider.dart';
+import 'package:camera_app/core/storage/app_storage.dart';
+import 'package:camera_app/providers/camera_provider.dart';
 import 'package:camera_app/screens/camera_screen.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';

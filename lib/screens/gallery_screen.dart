@@ -1,5 +1,5 @@
 import 'dart:io';
-import 'package:camera_app/provider/camera_provider.dart';
+import 'package:camera_app/providers/camera_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 

@@ -1,7 +1,8 @@
 import 'dart:io';
+import 'dart:ui';
 
 import 'package:camera/camera.dart';
-import 'package:camera_app/provider/camera_provider.dart';
+import 'package:camera_app/providers/camera_provider.dart';
 import 'package:camera_app/screens/gallery_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -57,10 +58,9 @@ class _CameraScreenState extends State<CameraScreen> {
       ),
       extendBodyBehindAppBar: true,
       body: Consumer<CameraProvider>(
-        builder: (context, cameraProvider, child) {
+        builder: (context, provider, child) {
           //kamera yüklenmediyse
-          if (!cameraProvider.isInitialized ||
-              cameraProvider.controller == null) {
+          if (!provider.isInitialized || provider.controller == null) {
             return const Center(
               child: CircularProgressIndicator(color: Colors.black),
             );
@@ -71,154 +71,217 @@ class _CameraScreenState extends State<CameraScreen> {
           return Stack(
             fit: StackFit.expand,
             children: [
+              // kamera
               Center(
-                child: cameraProvider.capturedImage != null
+                child: provider.capturedImage != null
                     ? Image.file(
-                        File(cameraProvider.capturedImage!.path),
+                        File(provider.capturedImage!.path),
                         fit: BoxFit.cover,
                         width: double.infinity,
                         height: double.infinity,
                       )
-                    : CameraPreview(cameraProvider.controller!),
+                    : CameraPreview(provider.controller!),
               ),
-              if (cameraProvider.capturedImage == null)
-                Positioned(
-                  top: 120,
-                  left: 20,
-                  right: 20,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 24, vertical: 16),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.65),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: Colors.white24, width: 1),
-                    ),
-                    child: Text(
-                      cameraProvider.guidanceKey
-                          .tr(), // Easy localization çevirisi yapıyor
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 0.5,
+
+              // guidance yönlendirme kutusu
+              if (provider.capturedImage == null)
+                Align(
+                  // Ekranın tam ortasının biraz üstü (Yüz hizası)
+                  alignment: const Alignment(0.0, -0.65),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(20),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 32, vertical: 20),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(
+                              0.5), // Okunabilirliği artırmak için biraz koyulttuk
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                              color: Colors.white.withOpacity(0.3), width: 1.5),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              provider.guidanceKey == 'saga_cevir'
+                                  ? Icons.turn_right
+                                  : provider.guidanceKey == 'sola_cevir'
+                                      ? Icons.turn_left
+                                      : provider.guidanceKey == 'yuz_bulunamadi'
+                                          ? Icons.face_retouching_off
+                                          : Icons.face,
+                              color: Colors.white,
+                              size: 36, // İkon boyutunu oldukça büyüttük
+                            ),
+                            const SizedBox(width: 16),
+                            Text(
+                              provider.guidanceKey.tr(),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize:
+                                    24, // Yazı boyutunu çok daha belirgin yaptık
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 1.2,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
                 ),
+
+              // alt kontrol paneli
               Positioned(
                 bottom: 30,
-                left: 20,
-                right: 20,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.7),
-                    borderRadius: BorderRadius.circular(30),
-                  ),
-                  child: cameraProvider.capturedImage != null
-                      // Fotoğraf Çekildiyse Gösterilecek Butonlar
-                      ? Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            TextButton.icon(
-                              onPressed: () =>
-                                  cameraProvider.clearCapturedImage(),
-                              icon:
-                                  const Icon(Icons.close, color: Colors.white),
-                              label: const Text("İptal Et",
-                                  style: TextStyle(color: Colors.white)),
-                            ),
-                            const SizedBox(width: 20),
-                            ElevatedButton.icon(
-                              onPressed: () async {
-                                await cameraProvider.saveCapturedImage();
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                      content: Text(
-                                          "Fotoğraf galeriye kaydedildi!")),
-                                );
-                              },
-                              icon: const Icon(Icons.check),
-                              label: const Text("Kaydet"),
-                            ),
-                          ],
-                        )
-                      // Canlı Kameradayken Gösterilecek Butonlar
-                      : Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                          children: [
-                            // Çözünürlük Seçici
-                            DropdownButton<ResolutionPreset>(
-                              dropdownColor: Colors.black87,
-                              value: cameraProvider.selectedResolution,
-                              style: const TextStyle(color: Colors.white),
-                              icon: const Icon(Icons.high_quality,
-                                  color: Colors.white),
-                              underline: const SizedBox(),
-                              items: const [
-                                DropdownMenuItem(
-                                    value: ResolutionPreset.low,
-                                    child: Text("Low")),
-                                DropdownMenuItem(
-                                    value: ResolutionPreset.medium,
-                                    child: Text("Med")),
-                                DropdownMenuItem(
-                                    value: ResolutionPreset.high,
-                                    child: Text("High")),
-                                DropdownMenuItem(
-                                    value: ResolutionPreset.max,
-                                    child: Text("Max")),
-                              ],
-                              onChanged: (value) {
-                                if (value != null) {
-                                  cameraProvider.changeResolution(value);
-                                }
-                              },
-                            ),
-
-                            GestureDetector(
-                              onTap: () {
-                                if (!cameraProvider.isTakingPicture) {
-                                  cameraProvider.takePicture();
-                                }
-                              },
-                              child: Container(
-                                width: 70,
-                                height: 70,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  border:
-                                      Border.all(color: Colors.white, width: 4),
+                left: 40,
+                right: 40,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(30),
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10), // Daraltıldı
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.4),
+                        borderRadius: BorderRadius.circular(30),
+                        border:
+                            Border.all(color: Colors.white.withOpacity(0.1)),
+                      ),
+                      child: provider.capturedImage != null
+                          ? Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                              children: [
+                                TextButton.icon(
+                                  onPressed: () =>
+                                      provider.clearCapturedImage(),
+                                  icon: const Icon(Icons.close,
+                                      color: Colors.redAccent, size: 20),
+                                  label: const Text("İptal",
+                                      style:
+                                          TextStyle(color: Colors.redAccent)),
                                 ),
-                                child: Container(
-                                  margin: const EdgeInsets.all(4),
-                                  decoration: const BoxDecoration(
-                                    color: Colors.white,
-                                    shape: BoxShape.circle,
+                                ElevatedButton.icon(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.green,
+                                    foregroundColor: Colors.white,
+                                    shape: RoundedRectangleBorder(
+                                        borderRadius:
+                                            BorderRadius.circular(20)),
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 16, vertical: 8),
                                   ),
-                                  child: cameraProvider.isTakingPicture
-                                      ? const Padding(
-                                          padding: EdgeInsets.all(16.0),
-                                          child: CircularProgressIndicator(
-                                            color: Colors.black,
-                                            strokeWidth: 3,
-                                          ),
-                                        )
-                                      : null, // Yüklenme yoksa içi boş beyaz kalır
+                                  onPressed: () async {
+                                    await provider.saveCapturedImage();
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                              "📸 Fotoğraf galeriye kaydedildi!"),
+                                          backgroundColor: Colors.green,
+                                          behavior: SnackBarBehavior.floating,
+                                        ),
+                                      );
+                                    }
+                                  },
+                                  icon: const Icon(Icons.check, size: 20),
+                                  label: const Text("Onayla"),
                                 ),
-                              ),
+                              ],
+                            )
+                          : Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                              children: [
+                                // çözünürlük seçme
+                                PopupMenuButton<ResolutionPreset>(
+                                  icon: const Icon(Icons.hd,
+                                      color: Colors.white, size: 26),
+                                  color: Colors.black87,
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12)),
+                                  initialValue: provider.selectedResolution,
+                                  onSelected: (value) =>
+                                      provider.changeResolution(value),
+                                  itemBuilder: (context) => const [
+                                    PopupMenuItem(
+                                        value: ResolutionPreset.low,
+                                        child: Text("Low",
+                                            style: TextStyle(
+                                                color: Colors.white))),
+                                    PopupMenuItem(
+                                        value: ResolutionPreset.medium,
+                                        child: Text("Medium",
+                                            style: TextStyle(
+                                                color: Colors.white))),
+                                    PopupMenuItem(
+                                        value: ResolutionPreset.high,
+                                        child: Text("High",
+                                            style: TextStyle(
+                                                color: Colors.white))),
+                                    PopupMenuItem(
+                                        value: ResolutionPreset.max,
+                                        child: Text("Max",
+                                            style: TextStyle(
+                                                color: Colors.white))),
+                                  ],
+                                ),
+
+                                // Deklanşör Butonu (Bir tık daha kibar)
+                                GestureDetector(
+                                  onTap: () {
+                                    if (!provider.isTakingPicture)
+                                      provider.takePicture();
+                                  },
+                                  child: Container(
+                                    width: 66, // 76'dan 66'ya düşürüldü
+                                    height: 66,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                          color: Colors.white, width: 3),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.3),
+                                          blurRadius: 8,
+                                          spreadRadius: 1,
+                                        )
+                                      ],
+                                    ),
+                                    child: Container(
+                                      margin: const EdgeInsets.all(5),
+                                      decoration: BoxDecoration(
+                                        color: provider.isTakingPicture
+                                            ? Colors.grey
+                                            : Colors.white,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: provider.isTakingPicture
+                                          ? const Padding(
+                                              padding: EdgeInsets.all(14.0),
+                                              child: CircularProgressIndicator(
+                                                  color: Colors.black,
+                                                  strokeWidth: 2.5),
+                                            )
+                                          : null,
+                                    ),
+                                  ),
+                                ),
+
+                                // Kamera Çevirme
+                                IconButton(
+                                  icon: const Icon(Icons.cameraswitch,
+                                      color: Colors.white, size: 26),
+                                  onPressed: () => provider.toggleCamera(),
+                                ),
+                              ],
                             ),
-                            // Ön/Arka Kamera Değiştirme Butonu
-                            IconButton(
-                              icon: const Icon(Icons.cameraswitch,
-                                  color: Colors.white, size: 30),
-                              onPressed: () => cameraProvider.toggleCamera(),
-                            ),
-                          ],
-                        ),
+                    ),
+                  ),
                 ),
               ),
             ],
