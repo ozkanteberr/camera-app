@@ -1,5 +1,6 @@
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 
 class CameraProvider extends ChangeNotifier {
   CameraController? _controller;
@@ -12,6 +13,10 @@ class CameraProvider extends ChangeNotifier {
   XFile? _capturedImage;
   bool _isTakingPicture = false;
 
+  late FaceDetector _faceDetector;
+  bool _isProcessing = false;
+  bool _isStreamRunning = false;
+
   //(getter) sadece okuma
   CameraController? get controller => _controller;
   bool get isInitialized => _isInitialized;
@@ -20,6 +25,16 @@ class CameraProvider extends ChangeNotifier {
   ResolutionPreset get selectedResolution => _selectedResolution;
   XFile? get capturedImage => _capturedImage;
   bool get isTakingPicture => _isTakingPicture;
+
+  bool get isStreamRunning => _isStreamRunning;
+
+  CameraProvider() {
+    _faceDetector = FaceDetector(
+        options: FaceDetectorOptions(
+            enableClassification: false,
+            enableTracking: true,
+            performanceMode: FaceDetectorMode.accurate));
+  }
 
   Future<void> initializeCameras() async {
     if (_controller != null) return;
@@ -44,28 +59,96 @@ class CameraProvider extends ChangeNotifier {
   Future<void> _setupCameraController() async {
     if (_cameras.isEmpty) return;
 
+    _isInitialized = false;
+    _isStreamRunning = false;
+    _isProcessing = false;
+    notifyListeners();
+
     if (_controller != null) {
-      await _controller!.dispose();
+      try {
+        await _controller!.dispose();
+      } catch (e) {
+        debugPrint("Önceki kamera temizlenirken hata oluştu: $e");
+      }
+      _controller = null;
     }
 
-    final selectedCamera = _cameras[_selectedCameraIndex];
-
-    _controller = CameraController(selectedCamera, _selectedResolution,
-        enableAudio: false, imageFormatGroup: ImageFormatGroup.nv21);
+    _controller = CameraController(
+      _cameras[_selectedCameraIndex],
+      _selectedResolution,
+      enableAudio: false,
+      imageFormatGroup: ImageFormatGroup.nv21,
+    );
 
     try {
       await _controller!.initialize();
       _isInitialized = true;
       _capturedImage = null;
       notifyListeners();
+
+      startLiveStream();
     } catch (e) {
       debugPrint("Kamera başlatılırken hata oluştu: $e");
+    }
+  }
+
+  void startLiveStream() {
+    if (_controller == null || !_isInitialized) return;
+    if (_isStreamRunning) return;
+
+    try {
+      _isStreamRunning = true;
+      _isProcessing = false;
+      _controller!.startImageStream((CameraImage image) async {
+        if (_isProcessing) return;
+
+        _isProcessing = true;
+
+        try {
+          await _processFrame(image);
+        } catch (e) {
+          debugPrint("Kare işlenirken hata oluştu: $e");
+        } finally {
+          _isProcessing = false;
+        }
+      });
+    } catch (e) {
+      debugPrint("Canlı akış başlatılırken hata: $e");
+      _isStreamRunning = false;
+    }
+  }
+
+  Future<void> _processFrame(CameraImage image) async {
+    debugPrint(
+        "Canlı akıştan kare yakalandı. Genişlik: ${image.width}, Yükseklik: ${image.height}");
+  }
+
+  Future<void> stopLiveStream() async {
+    if (_controller == null || !isStreamRunning) {
+      _isStreamRunning = false;
+      _isProcessing = false;
+      return;
+    }
+
+    try {
+      if (_controller!.value.isStreamingImages) {
+        await controller!.stopImageStream();
+        debugPrint("Canlı akış donanımsal olarak durduruldu.");
+      }
+    } catch (e) {
+      debugPrint(
+          "Donanımsal akış durdurulurken istisna oluştu (Güvenli geçiş): $e");
+    } finally {
+      _isStreamRunning = false;
+      _isProcessing = false;
+      notifyListeners();
     }
   }
 
   Future<void> toggleCamera() async {
     if (_cameras.length < 2) return;
 
+    await stopLiveStream();
     _isInitialized = false;
     notifyListeners();
 
@@ -84,22 +167,29 @@ class CameraProvider extends ChangeNotifier {
   }
 
   Future<void> takePicture() async {
-    if (_controller == null && _controller!.value.isInitialized) return;
-    if (_controller!.value.isTakingPicture) return;
-    if (_isTakingPicture) return;
+    if (_controller == null || !_controller!.value.isInitialized) return;
+    if (_controller!.value.isTakingPicture || _isTakingPicture) return;
 
     try {
+      _isTakingPicture = true;
+      notifyListeners();
+
+      await stopLiveStream();
+
       final XFile image = await _controller!.takePicture();
       _capturedImage = image;
-      notifyListeners();
     } catch (e) {
       debugPrint("Fotoğraf çekilirken hata: $e");
+    } finally {
+      _isTakingPicture = false;
+      notifyListeners();
     }
   }
 
   void clearCapturedImage() {
     _capturedImage = null;
     notifyListeners();
+    startLiveStream();
   }
 
   void updateGuidance(String newKey) {
