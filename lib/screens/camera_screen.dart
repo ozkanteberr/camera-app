@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:camera/camera.dart';
 import 'package:camera_app/provider/camera_provider.dart';
+import 'package:camera_app/screens/gallery_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:easy_localization/easy_localization.dart';
@@ -40,6 +41,18 @@ class _CameraScreenState extends State<CameraScreen> {
           backgroundColor: Colors.transparent,
           elevation: 0,
           foregroundColor: Colors.black,
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.photo_library, size: 28),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (context) => const GalleryScreen()),
+                );
+              },
+            ),
+          ],
         ),
       ),
       extendBodyBehindAppBar: true,
@@ -120,12 +133,16 @@ class _CameraScreenState extends State<CameraScreen> {
                             ),
                             const SizedBox(width: 20),
                             ElevatedButton.icon(
-                              onPressed: () {
-                                debugPrint(
-                                    "Fotoğraf Onaylandı: ${cameraProvider.capturedImage!.path}");
+                              onPressed: () async {
+                                await cameraProvider.saveCapturedImage();
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                      content: Text(
+                                          "Fotoğraf galeriye kaydedildi!")),
+                                );
                               },
                               icon: const Icon(Icons.check),
-                              label: const Text("Onayla"),
+                              label: const Text("Kaydet"),
                             ),
                           ],
                         )

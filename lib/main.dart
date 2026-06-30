@@ -18,7 +18,10 @@ void main() async {
       path: "assets/translations",
       fallbackLocale: const Locale('tr'),
       child: MultiProvider(
-        providers: [ChangeNotifierProvider(create: (_) => CameraProvider())],
+        providers: [
+          ChangeNotifierProvider(
+              create: (_) => CameraProvider()..loadSavedPhotos())
+        ],
         child: const MyApp(),
       ),
     ),

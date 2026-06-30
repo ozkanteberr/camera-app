@@ -1,6 +1,7 @@
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
+import 'package:hive/hive.dart';
 
 class CameraProvider extends ChangeNotifier {
   CameraController? _controller;
@@ -17,6 +18,8 @@ class CameraProvider extends ChangeNotifier {
   bool _isProcessing = false;
   bool _isStreamRunning = false;
 
+  List<String> _savedPhotos = [];
+
   //(getter) sadece okuma
   CameraController? get controller => _controller;
   bool get isInitialized => _isInitialized;
@@ -27,6 +30,8 @@ class CameraProvider extends ChangeNotifier {
   bool get isTakingPicture => _isTakingPicture;
 
   bool get isStreamRunning => _isStreamRunning;
+
+  List<String> get savedPhotos => _savedPhotos;
 
   CameraProvider() {
     _faceDetector = FaceDetector(
@@ -205,6 +210,44 @@ class CameraProvider extends ChangeNotifier {
       _controller = null;
       _isInitialized = false;
       notifyListeners();
+    }
+  }
+
+  void loadSavedPhotos() {
+    final box = Hive.box<String>('photosBox');
+    _savedPhotos = box.values.toList().reversed.toList();
+    notifyListeners();
+  }
+
+  Future<void> saveCapturedImage() async {
+    if (_capturedImage == null) return;
+
+    try {
+      final box = Hive.box<String>('photosBox');
+
+      await box.add(_capturedImage!.path);
+      debugPrint("Fotoğraf yolu Hive'a kaydedildi: ${_capturedImage!.path}");
+      loadSavedPhotos();
+
+      _capturedImage = null;
+      notifyListeners();
+      startLiveStream();
+    } catch (e) {
+      debugPrint("Hive kaydı yapılırken hata oluştu: $e");
+    }
+  }
+
+  Future<void> deletePhoto(int index) async {
+    try {
+      final box = Hive.box<String>('photosBox');
+
+      int actualIndex = box.length - 1 - index;
+
+      await box.deleteAt(actualIndex);
+      debugPrint("Fotoğraf Hive'dan silindi.");
+      loadSavedPhotos();
+    } catch (e) {
+      debugPrint("Fotoğraf silinirken hata oluştu: $e");
     }
   }
 
