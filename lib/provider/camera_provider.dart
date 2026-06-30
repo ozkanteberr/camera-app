@@ -24,6 +24,8 @@ class CameraProvider extends ChangeNotifier {
 
   List<String> _savedPhotos = [];
 
+  DateTime? _lastProcessedTime;
+
   //(getter) sadece okuma
   CameraController? get controller => _controller;
   bool get isInitialized => _isInitialized;
@@ -113,8 +115,13 @@ class CameraProvider extends ChangeNotifier {
       _controller!.startImageStream((CameraImage image) async {
         if (_isProcessing) return;
 
+        final now = DateTime.now();
+        if (_lastProcessedTime != null &&
+            now.difference(_lastProcessedTime!).inMilliseconds < 250) {
+          return;
+        }
         _isProcessing = true;
-
+        _lastProcessedTime = now;
         try {
           await _processFrame(image);
         } catch (e) {
@@ -155,9 +162,9 @@ class CameraProvider extends ChangeNotifier {
       }
 
       if (eulerY > 20) {
-        _updateGuidanceState('sola_cevir');
-      } else if (eulerY < -20) {
         _updateGuidanceState('saga_cevir');
+      } else if (eulerY < -20) {
+        _updateGuidanceState('sola_cevir');
       } else {
         _updateGuidanceState('duz_bak');
       }
