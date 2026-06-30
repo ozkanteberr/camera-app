@@ -3,6 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:hive/hive.dart';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'dart:io';
+
 class CameraProvider extends ChangeNotifier {
   CameraController? _controller;
   List<CameraDescription> _cameras = [];
@@ -82,7 +86,9 @@ class CameraProvider extends ChangeNotifier {
       _cameras[_selectedCameraIndex],
       _selectedResolution,
       enableAudio: false,
-      imageFormatGroup: ImageFormatGroup.nv21,
+      imageFormatGroup: Platform.isAndroid
+          ? ImageFormatGroup.nv21
+          : ImageFormatGroup.bgra8888,
     );
 
     try {
@@ -124,8 +130,48 @@ class CameraProvider extends ChangeNotifier {
   }
 
   Future<void> _processFrame(CameraImage image) async {
-    debugPrint(
-        "Canlı akıştan kare yakalandı. Genişlik: ${image.width}, Yükseklik: ${image.height}");
+    final inputImage = _inputImageFromCameraImage(image);
+
+    if (inputImage == null) {
+      _updateGuidanceState('yuz_bulunamadi');
+      return;
+    }
+
+    try {
+      List<Face> faces = await _faceDetector.processImage(inputImage);
+
+      if (faces.isEmpty) {
+        _updateGuidanceState('yuz_bulunamadi');
+        return;
+      }
+
+      final Face face = faces.first;
+
+      final double? eulerY = face.headEulerAngleY;
+
+      if (eulerY == null) {
+        _updateGuidanceState('yuz_bulunamadi');
+        return;
+      }
+
+      if (eulerY > 20) {
+        _updateGuidanceState('sola_cevir');
+      } else if (eulerY < -20) {
+        _updateGuidanceState('saga_cevir');
+      } else {
+        _updateGuidanceState('duz_bak');
+      }
+    } catch (e) {
+      debugPrint("Yapay zeka yüz analizi yaparken hata oluştu: $e");
+    }
+  }
+
+  void _updateGuidanceState(String newKey) {
+    if (_guidanceKey != newKey) {
+      _guidanceKey = newKey;
+      notifyListeners();
+      debugPrint("Durum Değişti: $newKey");
+    }
   }
 
   Future<void> stopLiveStream() async {
@@ -249,6 +295,67 @@ class CameraProvider extends ChangeNotifier {
     } catch (e) {
       debugPrint("Fotoğraf silinirken hata oluştu: $e");
     }
+  }
+
+  InputImage? _inputImageFromCameraImage(CameraImage image) {
+    if (_controller == null) return null;
+
+    final camera = _cameras[_selectedCameraIndex];
+    final sensorOrientation = camera.sensorOrientation;
+
+    InputImageRotation? rotation;
+    final orientation = _controller!.value.deviceOrientation;
+
+    if (camera.lensDirection == CameraLensDirection.front) {
+      switch (orientation) {
+        case DeviceOrientation.portraitUp:
+          rotation = InputImageRotation.rotation270deg;
+          break;
+        case DeviceOrientation.landscapeLeft:
+          rotation = InputImageRotation.rotation180deg;
+          break;
+        case DeviceOrientation.portraitDown:
+          rotation = InputImageRotation.rotation90deg;
+          break;
+        case DeviceOrientation.landscapeRight:
+          rotation = InputImageRotation.rotation0deg;
+          break;
+      }
+    } else {
+      switch (orientation) {
+        case DeviceOrientation.portraitUp:
+          rotation = InputImageRotation.rotation90deg;
+          break;
+        case DeviceOrientation.landscapeLeft:
+          rotation = InputImageRotation.rotation90deg;
+          break;
+        case DeviceOrientation.portraitDown:
+          rotation = InputImageRotation.rotation270deg;
+          break;
+        case DeviceOrientation.landscapeRight:
+          rotation = InputImageRotation.rotation180deg;
+          break;
+      }
+    }
+
+    final format =
+        Platform.isAndroid ? InputImageFormat.nv21 : InputImageFormat.bgra8888;
+
+    final plane = image.planes.first;
+    final WriteBuffer allBytes = WriteBuffer();
+    for (final Plane plane in image.planes) {
+      allBytes.putUint8List(plane.bytes);
+    }
+    final bytes = allBytes.done().buffer.asUint8List();
+
+    final metadata = InputImageMetadata(
+      size: Size(image.width.toDouble(), image.height.toDouble()),
+      rotation: rotation,
+      format: format,
+      bytesPerRow: plane.bytesPerRow,
+    );
+
+    return InputImage.fromBytes(bytes: bytes, metadata: metadata);
   }
 
   @override
