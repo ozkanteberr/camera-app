@@ -42,6 +42,7 @@ class _CameraScreenState extends State<CameraScreen> {
           backgroundColor: Colors.transparent,
           elevation: 0,
           foregroundColor: Colors.black,
+          automaticallyImplyLeading: false,
           actions: [
             IconButton(
               icon: const Icon(Icons.photo_library, size: 28),
