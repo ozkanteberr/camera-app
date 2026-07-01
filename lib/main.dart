@@ -16,9 +16,9 @@ void main() async {
   await AppStorage.appStorageInitialize();
   runApp(
     EasyLocalization(
-      supportedLocales: const [Locale('tr'), Locale('en')],
+      supportedLocales: const [Locale('en', 'US'), Locale('tr', 'TR')],
       path: "assets/translations",
-      fallbackLocale: const Locale('tr'),
+      fallbackLocale: const Locale('tr', 'TR'),
       child: MultiProvider(
         providers: [
           ChangeNotifierProvider(

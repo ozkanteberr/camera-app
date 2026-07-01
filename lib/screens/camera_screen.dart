@@ -41,7 +41,7 @@ class _CameraScreenState extends State<CameraScreen> {
           return Stack(
             fit: StackFit.expand,
             children: [
-              // 1. Kamera Görüntüsü
+              // Kamera Görüntüsü
               Center(
                 child: provider.capturedImage != null
                     ? Image.file(File(provider.capturedImage!.path),
@@ -49,7 +49,7 @@ class _CameraScreenState extends State<CameraScreen> {
                     : CameraPreview(provider.controller!),
               ),
 
-              // 2. YÖNLENDİRME KUTUSU (Geri getirildi!)
+              // yönlendirme butonu
               if (provider.capturedImage == null)
                 Align(
                   alignment: const Alignment(0.0, -0.65),
@@ -126,7 +126,7 @@ class _CameraScreenState extends State<CameraScreen> {
                 ),
               ),
 
-              // 4. Alt Kontrol Paneli (Çözünürlük Menüsü ve Deklanşör dahil)
+              // Alt Kontrol Paneli
               Positioned(
                 bottom: 40,
                 left: 20,
@@ -157,12 +157,12 @@ class _CameraScreenState extends State<CameraScreen> {
         TextButton.icon(
           onPressed: () => provider.clearCapturedImage(),
           icon: const Icon(Icons.close, color: Colors.redAccent),
-          label: const Text("İptal", style: TextStyle(color: Colors.redAccent)),
+          label: Text("cancel".tr(), style: TextStyle(color: Colors.redAccent)),
         ),
         ElevatedButton.icon(
           onPressed: () async => await provider.saveCapturedImage(),
           icon: const Icon(Icons.check, color: Colors.white),
-          label: const Text("Onayla", style: TextStyle(color: Colors.white)),
+          label: Text("confirm".tr(), style: TextStyle(color: Colors.white)),
           style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
         ),
       ],
@@ -179,19 +179,21 @@ class _CameraScreenState extends State<CameraScreen> {
           initialValue: provider.selectedResolution,
           onSelected: (value) =>
               provider.changeResolution(value), // Fonksiyon bağlandı!
-          itemBuilder: (context) => const [
+          itemBuilder: (context) => [
             PopupMenuItem(
                 value: ResolutionPreset.low,
-                child: Text("Low", style: TextStyle(color: Colors.white))),
+                child: Text("low".tr(), style: TextStyle(color: Colors.white))),
             PopupMenuItem(
                 value: ResolutionPreset.medium,
-                child: Text("Medium", style: TextStyle(color: Colors.white))),
+                child:
+                    Text("medium".tr(), style: TextStyle(color: Colors.white))),
             PopupMenuItem(
                 value: ResolutionPreset.high,
-                child: Text("High", style: TextStyle(color: Colors.white))),
+                child:
+                    Text("high".tr(), style: TextStyle(color: Colors.white))),
             PopupMenuItem(
                 value: ResolutionPreset.max,
-                child: Text("Max", style: TextStyle(color: Colors.white))),
+                child: Text("max".tr(), style: TextStyle(color: Colors.white))),
           ],
         ),
         GestureDetector(

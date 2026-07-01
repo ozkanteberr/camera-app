@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:camera_app/providers/camera_provider.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -11,7 +12,7 @@ class GalleryScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: Colors.grey[900],
       appBar: AppBar(
-        title: const Text("Kaydedilen Fotoğraflar"),
+        title: Text("gallery_title".tr()),
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
       ),

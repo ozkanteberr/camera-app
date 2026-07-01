@@ -1,0 +1,20 @@
+{
+  "duz_bak": "Please Look Straight",
+  "saga_cevir": "Turn Your Face Right",
+  "sola_cevir": "Turn Your Face Left",
+  "yuz_bulunamadi": "Face Not Detected",
+  "gallery_title":"Saved Photos",
+  "cancel":"Cancel",
+  "confirm":"Confirm",
+  "home_screen_title":"3 Examples of Different Libraries Using ML Kit",
+  "face_detection_title": "Face Detection & Analysis",
+  "face_detection_subtitle": "Detects face angles in live camera.",
+  "text_recognition_title": "Text Recognition (OCR)",
+  "text_recognition_subtitle": "Converts text in camera to digital text live.",
+  "pose_detection_title": "Pose & Motion Detection",
+  "pose_detection_subtitle": "Detects body joints and movements.",
+  "low":"Low",
+  "medium":"Medium",
+  "high":"High",
+  "max":"Max"
+}

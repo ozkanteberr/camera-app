@@ -1,0 +1,20 @@
+{
+  "duz_bak": "Lütfen Düz Bakınız",
+  "saga_cevir": "Yüzünüzü Sağa Çevirin",
+  "sola_cevir": "Yüzünüzü Sola Çevirin",
+  "yuz_bulunamadi": "Yüz Tespit Edilemedi",
+  "gallery_title":"Kaydedilen Fotoğraflar",
+  "cancel":"İptal",
+  "Confirm":"Onayla",
+  "home_screen_title": "ML Kit ile 3 farklı kütüphane örneği",
+  "face_detection_title": "Yüz Tespiti & Analizi",
+  "face_detection_subtitle": "Canlı kamerada yüz açılarını tespit eder.",
+  "text_recognition_title": "Metin Okuma (OCR)",
+  "text_recognition_subtitle": "Kameradaki yazıları canlı olarak metne çevirir.",
+  "pose_detection_title": "İskelet & Hareket Tespiti",
+  "pose_detection_subtitle": "Vücut eklemlerini ve hareketleri algılar.",
+  "low":"Düşük",
+  "medium":"Orta",
+  "high":"Yüksek",
+  "max":"Çok yüksek"
+}

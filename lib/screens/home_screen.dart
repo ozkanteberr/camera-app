@@ -1,5 +1,6 @@
 import 'package:camera_app/screens/ocr_screen.dart';
 import 'package:camera_app/screens/pose_screen.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'dart:ui';
 import 'camera_screen.dart';
@@ -18,14 +19,32 @@ class HomeScreen extends StatelessWidget {
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
         elevation: 0,
+        actions: [
+          PopupMenuButton<Locale>(
+            icon: const Icon(Icons.language),
+            onSelected: (Locale locale) {
+              context.setLocale(locale); // Tüm uygulamada dili değiştirir
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: Locale('tr', 'TR'),
+                child: Text("🇹🇷 Türkçe"),
+              ),
+              const PopupMenuItem(
+                value: Locale('en', 'US'),
+                child: Text("🇺🇸 English"),
+              ),
+            ],
+          ),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(20.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text(
-              "Mlkit ile 3 farklı modeli deneyebilirsiniz.",
+            Text(
+              "home_screen_title".tr(),
               style: TextStyle(color: Colors.white70, fontSize: 16),
               textAlign: TextAlign.center,
             ),
@@ -34,8 +53,8 @@ class HomeScreen extends StatelessWidget {
             // (Face Detection)
             _buildMenuCard(
               context,
-              title: "Yüz Tespiti & Analizi",
-              subtitle: "Canlı kamerada yüz açılarını tespit eder.",
+              title: "face_detection_title".tr(),
+              subtitle: "face_detection_subtitle".tr(),
               icon: Icons.face_retouching_natural,
               color: Colors.blueAccent,
               onTap: () {
@@ -50,8 +69,8 @@ class HomeScreen extends StatelessWidget {
             //(Text Recognition)
             _buildMenuCard(
               context,
-              title: "Metin Okuma (OCR)",
-              subtitle: "Kameradaki yazıları canlı olarak metne çevirir.",
+              title: "text_recognition_title".tr(),
+              subtitle: "text_recognition_subtitle".tr(),
               icon: Icons.document_scanner,
               color: Colors.orangeAccent,
               onTap: () {
@@ -66,8 +85,8 @@ class HomeScreen extends StatelessWidget {
             //(Pose Detection)
             _buildMenuCard(
               context,
-              title: "İskelet & Hareket Tespiti",
-              subtitle: "Vücut eklemlerini ve hareketleri algılar.",
+              title: "pose_detection_title".tr(),
+              subtitle: "pose_detection_subtitle".tr(),
               icon: Icons.accessibility_new,
               color: Colors.greenAccent,
               onTap: () {
