@@ -12,6 +12,8 @@ class PoseProvider extends ChangeNotifier {
   bool _isInitialized = false;
   int _selectedCameraIndex = 0;
   DateTime? _lastProcessedTime;
+  bool _isViewActive = false;
+  bool get isViewActive => _isViewActive;
 
   late PoseDetector _poseDetector;
   bool _isProcessing = false;
@@ -74,7 +76,7 @@ class PoseProvider extends ChangeNotifier {
 
     _controller!.startImageStream((CameraImage image) async {
       if (_controller == null || !_controller!.value.isInitialized) return;
-      if (_isProcessing) return;
+      if (!_isViewActive || _isProcessing) return;
       final now = DateTime.now();
       if (_lastProcessedTime != null &&
           now.difference(_lastProcessedTime!).inMilliseconds < 150) {
@@ -160,7 +162,7 @@ class PoseProvider extends ChangeNotifier {
 
     final metadata = InputImageMetadata(
       size: Size(image.width.toDouble(), image.height.toDouble()),
-      rotation: rotation!,
+      rotation: rotation,
       format: format,
       bytesPerRow: image.planes.first.bytesPerRow,
     );
@@ -178,6 +180,29 @@ class PoseProvider extends ChangeNotifier {
     notifyListeners();
     _selectedCameraIndex = (_selectedCameraIndex + 1) % _cameras.length;
     await _setupCameraController();
+  }
+
+  void setViewActive(bool active) async {
+    _isViewActive = active;
+
+    // Aktif değilse ve kamera akışta ise, akışı durdur
+    if (!active &&
+        _controller != null &&
+        _controller!.value.isStreamingImages) {
+      try {
+        await _controller!.stopImageStream();
+        debugPrint("Kamera akışı (Stream) tamamen durduruldu.");
+      } catch (e) {
+        debugPrint("Hata: $e");
+      }
+    }
+    // Eğer tekrar aktif olduysa ve kamera hazırsa, stream'i tekrar başlat
+    else if (active &&
+        _controller != null &&
+        !_controller!.value.isStreamingImages) {
+      _startLiveStream();
+      debugPrint("Kamera akışı (Stream) tekrar başlatıldı.");
+    }
   }
 
   Future<void> releaseResources() async {

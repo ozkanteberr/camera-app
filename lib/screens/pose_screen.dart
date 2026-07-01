@@ -17,11 +17,15 @@ class _PoseScreenState extends State<PoseScreen> {
   void initState() {
     super.initState();
     // Ekran açılır açılmaz kamerayı ve Pose Provider'ı başlat
-    Future.microtask(() => context.read<PoseProvider>().initializeCameras());
+    Future.microtask(() {
+      context.read<PoseProvider>().setViewActive(true);
+      context.read<PoseProvider>().initializeCameras();
+    });
   }
 
   @override
   void dispose() {
+    context.read<PoseProvider>().setViewActive(false);
     context.read<PoseProvider>().releaseResources();
     super.dispose();
   }
@@ -81,7 +85,6 @@ class _PoseScreenState extends State<PoseScreen> {
                     icon: const Icon(Icons.arrow_back_ios_new,
                         color: Colors.white, size: 20),
                     onPressed: () {
-                      provider.dispose(); // Çıkarken donanımı serbest bırak
                       Navigator.pop(context);
                     },
                   ),

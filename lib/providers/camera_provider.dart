@@ -308,7 +308,7 @@ class CameraProvider extends ChangeNotifier {
     if (_controller == null) return null;
 
     final camera = _cameras[_selectedCameraIndex];
-    final sensorOrientation = camera.sensorOrientation;
+    //final sensorOrientation = camera.sensorOrientation;
 
     InputImageRotation? rotation;
     final orientation = _controller!.value.deviceOrientation;
