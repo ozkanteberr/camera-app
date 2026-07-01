@@ -73,6 +73,7 @@ class PoseProvider extends ChangeNotifier {
     if (_controller == null || !_isInitialized) return;
 
     _controller!.startImageStream((CameraImage image) async {
+      if (_controller == null || !_controller!.value.isInitialized) return;
       if (_isProcessing) return;
       final now = DateTime.now();
       if (_lastProcessedTime != null &&
@@ -86,7 +87,7 @@ class PoseProvider extends ChangeNotifier {
       try {
         debugPrint("Kare kameradan başarıyla alındı.");
 
-        final inputImage = _inputImageFromCameraImage(image);
+        final inputImage = await _inputImageFromCameraImage(image);
 
         if (inputImage != null) {
           debugPrint(
@@ -112,7 +113,7 @@ class PoseProvider extends ChangeNotifier {
     });
   }
 
-  InputImage? _inputImageFromCameraImage(CameraImage image) {
+  Future<InputImage?> _inputImageFromCameraImage(CameraImage image) async {
     if (_controller == null) return null;
     final camera = _cameras[_selectedCameraIndex];
 
@@ -154,21 +155,18 @@ class PoseProvider extends ChangeNotifier {
     final format =
         Platform.isAndroid ? InputImageFormat.nv21 : InputImageFormat.bgra8888;
 
-    final plane = image.planes.first;
-    final allBytes = WriteBuffer();
-    for (final Plane plane in image.planes) {
-      allBytes.putUint8List(plane.bytes);
-    }
-    final bytes = allBytes.done().buffer.asUint8List();
+    // final plane = image.planes.first;
+    final bytes = await compute(_processBytes, image.planes.toList());
 
     final metadata = InputImageMetadata(
       size: Size(image.width.toDouble(), image.height.toDouble()),
-      rotation: rotation,
+      rotation: rotation!,
       format: format,
-      bytesPerRow: plane.bytesPerRow,
+      bytesPerRow: image.planes.first.bytesPerRow,
     );
 
-    return InputImage.fromBytes(bytes: bytes, metadata: metadata);
+    return InputImage.fromBytes(
+        bytes: Uint8List.fromList(bytes), metadata: metadata);
   }
 
   Future<void> toggleCamera() async {
@@ -180,6 +178,36 @@ class PoseProvider extends ChangeNotifier {
     notifyListeners();
     _selectedCameraIndex = (_selectedCameraIndex + 1) % _cameras.length;
     await _setupCameraController();
+  }
+
+  Future<void> releaseResources() async {
+    // Önce akışı durdur
+    if (_controller != null) {
+      if (_controller!.value.isStreamingImages) {
+        try {
+          await _controller!.stopImageStream();
+          debugPrint("Kamera akışı durduruldu.");
+        } catch (e) {
+          debugPrint("Akış durdurulamadı (zaten durmuş olabilir): $e");
+        }
+      }
+
+      // Ardından dispose et
+      if (_controller!.value.isInitialized) {
+        await _controller!.dispose();
+      }
+      _controller = null;
+    }
+    _isInitialized = false;
+    notifyListeners();
+  }
+
+  static List<int> _processBytes(List<Plane> planes) {
+    final WriteBuffer allBytes = WriteBuffer();
+    for (final Plane plane in planes) {
+      allBytes.putUint8List(plane.bytes);
+    }
+    return allBytes.done().buffer.asUint8List();
   }
 
   @override

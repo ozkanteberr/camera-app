@@ -21,6 +21,12 @@ class _PoseScreenState extends State<PoseScreen> {
   }
 
   @override
+  void dispose() {
+    context.read<PoseProvider>().releaseResources();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
