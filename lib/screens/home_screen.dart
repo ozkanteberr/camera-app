@@ -1,3 +1,4 @@
+import 'package:camera_app/screens/ocr_screen.dart';
 import 'package:camera_app/screens/pose_screen.dart';
 import 'package:flutter/material.dart';
 import 'dart:ui';
@@ -54,10 +55,9 @@ class HomeScreen extends StatelessWidget {
               icon: Icons.document_scanner,
               color: Colors.orangeAccent,
               onTap: () {
-                // Text Recognition Ekranına Gidecek.
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                      content: Text("Metin okuma modülü yakında eklenecek!")),
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const OCRScreen()),
                 );
               },
             ),
