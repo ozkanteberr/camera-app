@@ -1,16 +1,17 @@
+﻿import 'dart:io';
+
 import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:hive/hive.dart';
-
-import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
-import 'dart:io';
 
 class CameraProvider extends ChangeNotifier {
   CameraController? _controller;
   List<CameraDescription> _cameras = [];
   bool _isInitialized = false;
+  bool _isViewActive = false;
   String _guidanceKey = 'duz_bak';
 
   int _selectedCameraIndex = 0;
@@ -18,33 +19,34 @@ class CameraProvider extends ChangeNotifier {
   XFile? _capturedImage;
   bool _isTakingPicture = false;
 
-  late FaceDetector _faceDetector;
+  late final FaceDetector _faceDetector;
   bool _isProcessing = false;
   bool _isStreamRunning = false;
+  DateTime? _lastProcessedTime;
 
   List<String> _savedPhotos = [];
 
-  DateTime? _lastProcessedTime;
-
-  //(getter) sadece okuma
   CameraController? get controller => _controller;
   bool get isInitialized => _isInitialized;
   String get guidanceKey => _guidanceKey;
-
   ResolutionPreset get selectedResolution => _selectedResolution;
   XFile? get capturedImage => _capturedImage;
   bool get isTakingPicture => _isTakingPicture;
-
   bool get isStreamRunning => _isStreamRunning;
-
   List<String> get savedPhotos => _savedPhotos;
 
   CameraProvider() {
     _faceDetector = FaceDetector(
-        options: FaceDetectorOptions(
-            enableClassification: false,
-            enableTracking: true,
-            performanceMode: FaceDetectorMode.accurate));
+      options: FaceDetectorOptions(
+        enableClassification: false,
+        enableTracking: true,
+        performanceMode: FaceDetectorMode.accurate,
+      ),
+    );
+  }
+
+  void setViewActive(bool active) {
+    _isViewActive = active;
   }
 
   Future<void> initializeCameras() async {
@@ -52,16 +54,17 @@ class CameraProvider extends ChangeNotifier {
 
     try {
       _cameras = await availableCameras();
-      if (_cameras.isNotEmpty) {
-        _selectedCameraIndex = _cameras.indexWhere(
-            (camera) => camera.lensDirection == CameraLensDirection.front);
-
-        if (_selectedCameraIndex == -1) _selectedCameraIndex = 0;
-
-        await _setupCameraController();
-      } else {
+      if (_cameras.isEmpty) {
         debugPrint("Cihazda kamera bulunamadı.");
+        return;
       }
+
+      _selectedCameraIndex = _cameras.indexWhere(
+        (camera) => camera.lensDirection == CameraLensDirection.front,
+      );
+      if (_selectedCameraIndex == -1) _selectedCameraIndex = 0;
+
+      await _setupCameraController();
     } catch (e) {
       debugPrint("Kamera başlatılırken hata oluştu: $e");
     }
@@ -70,35 +73,40 @@ class CameraProvider extends ChangeNotifier {
   Future<void> _setupCameraController() async {
     if (_cameras.isEmpty) return;
 
+    final oldController = _controller;
+    _controller = null;
     _isInitialized = false;
     _isStreamRunning = false;
     _isProcessing = false;
     notifyListeners();
 
-    if (_controller != null) {
+    if (oldController != null) {
       try {
-        await _controller!.dispose();
+        if (oldController.value.isStreamingImages) {
+          await oldController.stopImageStream();
+        }
+        await oldController.dispose();
       } catch (e) {
         debugPrint("Önceki kamera temizlenirken hata oluştu: $e");
       }
-      _controller = null;
     }
 
-    _controller = CameraController(
+    final controller = CameraController(
       _cameras[_selectedCameraIndex],
       _selectedResolution,
       enableAudio: false,
-      imageFormatGroup: Platform.isAndroid
-          ? ImageFormatGroup.nv21
-          : ImageFormatGroup.bgra8888,
+      imageFormatGroup:
+          Platform.isAndroid ? ImageFormatGroup.nv21 : ImageFormatGroup.bgra8888,
     );
+    _controller = controller;
 
     try {
-      await _controller!.initialize();
+      await controller.initialize();
+      if (_controller != controller) return;
+
       _isInitialized = true;
       _capturedImage = null;
       notifyListeners();
-
       startLiveStream();
     } catch (e) {
       debugPrint("Kamera başlatılırken hata oluştu: $e");
@@ -106,26 +114,30 @@ class CameraProvider extends ChangeNotifier {
   }
 
   void startLiveStream() {
-    if (_controller == null || !_isInitialized) return;
+    final controller = _controller;
+    if (!_isViewActive || controller == null || !_isInitialized) return;
     if (_isStreamRunning) return;
 
     try {
       _isStreamRunning = true;
       _isProcessing = false;
-      _controller!.startImageStream((CameraImage image) async {
-        if (_isProcessing) return;
+      controller.startImageStream((CameraImage image) async {
+        if (!_isViewActive || _isProcessing) return;
+        if (_controller != controller || !controller.value.isInitialized) return;
 
         final now = DateTime.now();
         if (_lastProcessedTime != null &&
             now.difference(_lastProcessedTime!).inMilliseconds < 250) {
           return;
         }
+
         _isProcessing = true;
         _lastProcessedTime = now;
+
         try {
           await _processFrame(image);
         } catch (e) {
-          debugPrint("Kare işlenirken hata oluştu: $e");
+          if (_isViewActive) debugPrint("Kare işlenirken hata oluştu: $e");
         } finally {
           _isProcessing = false;
         }
@@ -138,6 +150,7 @@ class CameraProvider extends ChangeNotifier {
 
   Future<void> _processFrame(CameraImage image) async {
     final inputImage = _inputImageFromCameraImage(image);
+    if (!_isViewActive) return;
 
     if (inputImage == null) {
       _updateGuidanceState('yuz_bulunamadi');
@@ -145,17 +158,15 @@ class CameraProvider extends ChangeNotifier {
     }
 
     try {
-      List<Face> faces = await _faceDetector.processImage(inputImage);
+      final faces = await _faceDetector.processImage(inputImage);
+      if (!_isViewActive) return;
 
       if (faces.isEmpty) {
         _updateGuidanceState('yuz_bulunamadi');
         return;
       }
 
-      final Face face = faces.first;
-
-      final double? eulerY = face.headEulerAngleY;
-
+      final eulerY = faces.first.headEulerAngleY;
       if (eulerY == null) {
         _updateGuidanceState('yuz_bulunamadi');
         return;
@@ -169,37 +180,39 @@ class CameraProvider extends ChangeNotifier {
         _updateGuidanceState('duz_bak');
       }
     } catch (e) {
-      debugPrint("Yapay zeka yüz analizi yaparken hata oluştu: $e");
+      if (_isViewActive) {
+        debugPrint("Yapay zeka yüz analizi yaparken hata oluştu: $e");
+      }
     }
   }
 
   void _updateGuidanceState(String newKey) {
+    if (!_isViewActive) return;
+
     if (_guidanceKey != newKey) {
       _guidanceKey = newKey;
       notifyListeners();
-      debugPrint("Durum Değişti: $newKey");
     }
   }
 
-  Future<void> stopLiveStream() async {
-    if (_controller == null || !isStreamRunning) {
+  Future<void> stopLiveStream({bool notify = true}) async {
+    final controller = _controller;
+    if (controller == null) {
       _isStreamRunning = false;
       _isProcessing = false;
       return;
     }
 
     try {
-      if (_controller!.value.isStreamingImages) {
-        await controller!.stopImageStream();
-        debugPrint("Canlı akış donanımsal olarak durduruldu.");
+      if (controller.value.isStreamingImages) {
+        await controller.stopImageStream();
       }
     } catch (e) {
-      debugPrint(
-          "Donanımsal akış durdurulurken istisna oluştu (Güvenli geçiş): $e");
+      debugPrint("Canlı akış durdurulurken hata: $e");
     } finally {
       _isStreamRunning = false;
       _isProcessing = false;
-      notifyListeners();
+      if (notify) notifyListeners();
     }
   }
 
@@ -211,12 +224,12 @@ class CameraProvider extends ChangeNotifier {
     notifyListeners();
 
     _selectedCameraIndex = (_selectedCameraIndex + 1) % _cameras.length;
-
     await _setupCameraController();
   }
 
   Future<void> changeResolution(ResolutionPreset newResolution) async {
     if (_selectedResolution == newResolution) return;
+
     _isInitialized = false;
     _selectedResolution = newResolution;
     notifyListeners();
@@ -225,8 +238,9 @@ class CameraProvider extends ChangeNotifier {
   }
 
   Future<void> takePicture() async {
-    if (_controller == null || !_controller!.value.isInitialized) return;
-    if (_controller!.value.isTakingPicture || _isTakingPicture) return;
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    if (controller.value.isTakingPicture || _isTakingPicture) return;
 
     try {
       _isTakingPicture = true;
@@ -234,7 +248,7 @@ class CameraProvider extends ChangeNotifier {
 
       await stopLiveStream();
 
-      final XFile image = await _controller!.takePicture();
+      final image = await controller.takePicture();
       _capturedImage = image;
     } catch (e) {
       debugPrint("Fotoğraf çekilirken hata: $e");
@@ -257,12 +271,30 @@ class CameraProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> closeCamera() async {
-    if (_controller != null) {
-      await _controller!.dispose();
-      _controller = null;
-      _isInitialized = false;
-      notifyListeners();
+  Future<void> closeCamera({bool notify = true}) async {
+    _isViewActive = false;
+
+    final controller = _controller;
+    _controller = null;
+    _isInitialized = false;
+    _isStreamRunning = false;
+    _isProcessing = false;
+    if (notify) notifyListeners();
+
+    if (controller == null) return;
+
+    try {
+      if (controller.value.isStreamingImages) {
+        await controller.stopImageStream();
+      }
+    } catch (e) {
+      debugPrint("Yüz tespiti kamera akışı kapatılırken hata: $e");
+    }
+
+    try {
+      await controller.dispose();
+    } catch (e) {
+      debugPrint("Yüz tespiti kamera dispose hatası: $e");
     }
   }
 
@@ -277,9 +309,7 @@ class CameraProvider extends ChangeNotifier {
 
     try {
       final box = Hive.box<String>('photosBox');
-
       await box.add(_capturedImage!.path);
-      debugPrint("Fotoğraf yolu Hive'a kaydedildi: ${_capturedImage!.path}");
       loadSavedPhotos();
 
       _capturedImage = null;
@@ -293,11 +323,9 @@ class CameraProvider extends ChangeNotifier {
   Future<void> deletePhoto(int index) async {
     try {
       final box = Hive.box<String>('photosBox');
-
-      int actualIndex = box.length - 1 - index;
+      final actualIndex = box.length - 1 - index;
 
       await box.deleteAt(actualIndex);
-      debugPrint("Fotoğraf Hive'dan silindi.");
       loadSavedPhotos();
     } catch (e) {
       debugPrint("Fotoğraf silinirken hata oluştu: $e");
@@ -305,13 +333,12 @@ class CameraProvider extends ChangeNotifier {
   }
 
   InputImage? _inputImageFromCameraImage(CameraImage image) {
-    if (_controller == null) return null;
+    final controller = _controller;
+    if (controller == null) return null;
 
     final camera = _cameras[_selectedCameraIndex];
-    //final sensorOrientation = camera.sensorOrientation;
-
-    InputImageRotation? rotation;
-    final orientation = _controller!.value.deviceOrientation;
+    final orientation = controller.value.deviceOrientation;
+    InputImageRotation rotation;
 
     if (camera.lensDirection == CameraLensDirection.front) {
       switch (orientation) {
@@ -347,13 +374,11 @@ class CameraProvider extends ChangeNotifier {
 
     final format =
         Platform.isAndroid ? InputImageFormat.nv21 : InputImageFormat.bgra8888;
-
     final plane = image.planes.first;
-    final WriteBuffer allBytes = WriteBuffer();
-    for (final Plane plane in image.planes) {
+    final allBytes = WriteBuffer();
+    for (final plane in image.planes) {
       allBytes.putUint8List(plane.bytes);
     }
-    final bytes = allBytes.done().buffer.asUint8List();
 
     final metadata = InputImageMetadata(
       size: Size(image.width.toDouble(), image.height.toDouble()),
@@ -362,11 +387,15 @@ class CameraProvider extends ChangeNotifier {
       bytesPerRow: plane.bytesPerRow,
     );
 
-    return InputImage.fromBytes(bytes: bytes, metadata: metadata);
+    return InputImage.fromBytes(
+      bytes: allBytes.done().buffer.asUint8List(),
+      metadata: metadata,
+    );
   }
 
   @override
   void dispose() {
+    _faceDetector.close();
     _controller?.dispose();
     super.dispose();
   }

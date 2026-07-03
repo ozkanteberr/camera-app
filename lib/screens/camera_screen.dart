@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 import 'dart:ui';
 import 'package:camera/camera.dart';
 import 'package:camera_app/providers/camera_provider.dart';
@@ -15,137 +15,162 @@ class CameraScreen extends StatefulWidget {
 }
 
 class _CameraScreenState extends State<CameraScreen> {
+  late final CameraProvider _cameraProvider;
+
   @override
   void initState() {
     super.initState();
-    Future.microtask(() => context.read<CameraProvider>().initializeCameras());
+    _cameraProvider = context.read<CameraProvider>();
+    Future.microtask(() async {
+      _cameraProvider.setViewActive(true);
+      await _cameraProvider.initializeCameras();
+    });
   }
 
   @override
   void dispose() {
-    context.read<CameraProvider>().closeCamera();
+    _cameraProvider.closeCamera(notify: false);
     super.dispose();
+  }
+
+  Future<void> _closeScreen() async {
+    final navigator = Navigator.of(context);
+    await _cameraProvider.closeCamera();
+    if (mounted) navigator.pop();
+  }
+
+  Future<void> _openGallery() async {
+    await _cameraProvider.closeCamera();
+    _cameraProvider.loadSavedPhotos();
+
+    if (!mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const GalleryScreen()),
+    );
+
+    if (!mounted) return;
+    _cameraProvider.setViewActive(true);
+    await _cameraProvider.initializeCameras();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Consumer<CameraProvider>(
-        builder: (context, provider, child) {
-          if (!provider.isInitialized || provider.controller == null) {
-            return const Center(
-                child: CircularProgressIndicator(color: Colors.white));
-          }
+    return WillPopScope(
+      onWillPop: () async {
+        await _cameraProvider.closeCamera();
+        return true;
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: Consumer<CameraProvider>(
+          builder: (context, provider, child) {
+            if (!provider.isInitialized || provider.controller == null) {
+              return const Center(
+                  child: CircularProgressIndicator(color: Colors.white));
+            }
 
-          return Stack(
-            fit: StackFit.expand,
-            children: [
-              // Kamera Görüntüsü
-              Center(
-                child: provider.capturedImage != null
-                    ? Image.file(File(provider.capturedImage!.path),
-                        fit: BoxFit.cover)
-                    : CameraPreview(provider.controller!),
-              ),
-
-              // yönlendirme butonu
-              if (provider.capturedImage == null)
-                Align(
-                  alignment: const Alignment(0.0, -0.65),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(20),
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 32, vertical: 20),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.5),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                              color: Colors.white.withOpacity(0.3), width: 1.5),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              provider.guidanceKey == 'saga_cevir'
-                                  ? Icons.turn_right
-                                  : provider.guidanceKey == 'sola_cevir'
-                                      ? Icons.turn_left
-                                      : provider.guidanceKey == 'yuz_bulunamadi'
-                                          ? Icons.face_retouching_off
-                                          : Icons.face,
-                              color: Colors.white,
-                              size: 36,
-                            ),
-                            const SizedBox(width: 16),
-                            Text(provider.guidanceKey.tr(),
-                                style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 24,
-                                    fontWeight: FontWeight.bold)),
-                          ],
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                Center(
+                  child: provider.capturedImage != null
+                      ? Image.file(File(provider.capturedImage!.path),
+                          fit: BoxFit.cover)
+                      : CameraPreview(provider.controller!),
+                ),
+                if (provider.capturedImage == null)
+                  Align(
+                    alignment: const Alignment(0.0, -0.65),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(20),
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 32, vertical: 20),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.5),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                                color: Colors.white.withOpacity(0.3),
+                                width: 1.5),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                provider.guidanceKey == 'saga_cevir'
+                                    ? Icons.turn_right
+                                    : provider.guidanceKey == 'sola_cevir'
+                                        ? Icons.turn_left
+                                        : provider.guidanceKey ==
+                                                'yuz_bulunamadi'
+                                            ? Icons.face_retouching_off
+                                            : Icons.face,
+                                color: Colors.white,
+                                size: 36,
+                              ),
+                              const SizedBox(width: 16),
+                              Text(provider.guidanceKey.tr(),
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 24,
+                                      fontWeight: FontWeight.bold)),
+                            ],
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-
-              Positioned(
-                top: 50,
-                left: 20,
-                child: Container(
-                  decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.5),
-                      shape: BoxShape.circle),
-                  child: IconButton(
-                    icon: const Icon(Icons.arrow_back_ios_new,
-                        color: Colors.white, size: 20),
-                    onPressed: () => Navigator.pop(context),
+                Positioned(
+                  top: 50,
+                  left: 20,
+                  child: Container(
+                    decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.5),
+                        shape: BoxShape.circle),
+                    child: IconButton(
+                      icon: const Icon(Icons.arrow_back_ios_new,
+                          color: Colors.white, size: 20),
+                      onPressed: _closeScreen,
+                    ),
                   ),
                 ),
-              ),
-
-              Positioned(
-                top: 50,
-                right: 20,
-                child: Container(
-                  decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.5),
-                      shape: BoxShape.circle),
-                  child: IconButton(
-                    icon: const Icon(Icons.photo_library,
-                        color: Colors.white, size: 22),
-                    onPressed: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => const GalleryScreen())),
+                Positioned(
+                  top: 50,
+                  right: 20,
+                  child: Container(
+                    decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.5),
+                        shape: BoxShape.circle),
+                    child: IconButton(
+                      icon: const Icon(Icons.photo_library,
+                          color: Colors.white, size: 22),
+                      onPressed: _openGallery,
+                    ),
                   ),
                 ),
-              ),
-
-              // Alt Kontrol Paneli
-              Positioned(
-                bottom: 40,
-                left: 20,
-                right: 20,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.6),
-                    borderRadius: BorderRadius.circular(30),
+                Positioned(
+                  bottom: 40,
+                  left: 20,
+                  right: 20,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 15),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.6),
+                      borderRadius: BorderRadius.circular(30),
+                    ),
+                    child: provider.capturedImage != null
+                        ? _buildConfirmRow(provider)
+                        : _buildCameraControls(provider),
                   ),
-                  child: provider.capturedImage != null
-                      ? _buildConfirmRow(provider)
-                      : _buildCameraControls(provider),
                 ),
-              ),
-            ],
-          );
-        },
+              ],
+            );
+          },
+        ),
       ),
     );
   }
@@ -177,8 +202,7 @@ class _CameraScreenState extends State<CameraScreen> {
           icon: const Icon(Icons.hd, color: Colors.white, size: 26),
           color: Colors.black87,
           initialValue: provider.selectedResolution,
-          onSelected: (value) =>
-              provider.changeResolution(value), // Fonksiyon bağlandı!
+          onSelected: (value) => provider.changeResolution(value),
           itemBuilder: (context) => [
             PopupMenuItem(
                 value: ResolutionPreset.low,

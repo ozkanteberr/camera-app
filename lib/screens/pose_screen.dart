@@ -1,4 +1,4 @@
-import 'package:camera_app/core/painters/pose_painter.dart';
+﻿import 'package:camera_app/core/painters/pose_painter.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:camera/camera.dart';
@@ -13,105 +13,108 @@ class PoseScreen extends StatefulWidget {
 }
 
 class _PoseScreenState extends State<PoseScreen> {
+  late final PoseProvider _poseProvider;
+
   @override
   void initState() {
     super.initState();
-    // Ekran açılır açılmaz kamerayı ve Pose Provider'ı başlat
-    Future.microtask(() {
-      context.read<PoseProvider>().setViewActive(true);
-      context.read<PoseProvider>().initializeCameras();
+    _poseProvider = context.read<PoseProvider>();
+    Future.microtask(() async {
+      _poseProvider.setViewActive(true);
+      await _poseProvider.initializeCameras();
     });
   }
 
   @override
   void dispose() {
-    context.read<PoseProvider>().setViewActive(false);
-    context.read<PoseProvider>().releaseResources();
+    _poseProvider.releaseResources(notify: false);
     super.dispose();
+  }
+
+  Future<void> _closeScreen() async {
+    final navigator = Navigator.of(context);
+    await _poseProvider.releaseResources();
+    if (mounted) navigator.pop();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Consumer<PoseProvider>(
-        builder: (context, provider, child) {
-          // Kamera henüz hazır değilse yükleme animasyonu göster
-          if (!provider.isInitialized || provider.controller == null) {
-            return const Center(
-              child: CircularProgressIndicator(color: Colors.greenAccent),
-            );
-          }
+    return WillPopScope(
+      onWillPop: () async {
+        await _poseProvider.releaseResources();
+        return true;
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: Consumer<PoseProvider>(
+          builder: (context, provider, child) {
+            if (!provider.isInitialized || provider.controller == null) {
+              return const Center(
+                child: CircularProgressIndicator(color: Colors.greenAccent),
+              );
+            }
 
-          // Kamera görüntüsünün ham çözünürlüğünü alıyoruz (Painter'ın boyutları oranlaması için gerekli)
-          final previewSize = provider.controller!.value.previewSize!;
-          // Portre (dik) modda olduğumuz için genişlik ve yüksekliği ters çeviriyoruz
-          final imageSize = Size(previewSize.height, previewSize.width);
+            final previewSize = provider.controller!.value.previewSize!;
+            final imageSize = Size(previewSize.height, previewSize.width);
+            final lensDirection = provider.controller!.description.lensDirection;
+            final rotation = lensDirection == CameraLensDirection.front
+                ? InputImageRotation.rotation270deg
+                : InputImageRotation.rotation90deg;
+            final isFrontCamera = lensDirection == CameraLensDirection.front;
 
-          // Kameranın ön veya arka olmasına göre dönüş açısını belirliyoruz
-          final lensDirection = provider.controller!.description.lensDirection;
-          final rotation = lensDirection == CameraLensDirection.front
-              ? InputImageRotation.rotation270deg
-              : InputImageRotation.rotation90deg;
-          final isFrontCamera = lensDirection == CameraLensDirection.front;
-          return Stack(
-            fit: StackFit.expand,
-            children: [
-              //Canlı Kamera Görüntüsü
-              CameraPreview(provider.controller!),
-
-              // İskelet Çizimi
-              if (provider.poses.isNotEmpty)
-                Positioned.fill(
-                  child: CustomPaint(
-                    painter: PosePainter(
-                      provider.poses,
-                      imageSize,
-                      rotation,
-                      isFrontCamera,
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                CameraPreview(provider.controller!),
+                if (provider.poses.isNotEmpty)
+                  Positioned.fill(
+                    child: CustomPaint(
+                      painter: PosePainter(
+                        provider.poses,
+                        imageSize,
+                        rotation,
+                        isFrontCamera,
+                      ),
+                    ),
+                  ),
+                Positioned(
+                  top: 50,
+                  left: 20,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.5),
+                      shape: BoxShape.circle,
+                    ),
+                    child: IconButton(
+                      icon: const Icon(Icons.arrow_back_ios_new,
+                          color: Colors.white, size: 20),
+                      onPressed: _closeScreen,
                     ),
                   ),
                 ),
-              // Geri Dönüş ve Kamera Çevirme
-              Positioned(
-                top: 50,
-                left: 20,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.5),
-                    shape: BoxShape.circle,
-                  ),
-                  child: IconButton(
-                    icon: const Icon(Icons.arrow_back_ios_new,
-                        color: Colors.white, size: 20),
-                    onPressed: () {
-                      Navigator.pop(context);
-                    },
-                  ),
-                ),
-              ),
-
-              Positioned(
-                bottom: 40,
-                right: 30,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.6),
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                        color: Colors.greenAccent.withOpacity(0.5), width: 2),
-                  ),
-                  child: IconButton(
-                    icon: const Icon(Icons.cameraswitch,
-                        color: Colors.white, size: 28),
-                    onPressed: () => provider.toggleCamera(),
+                Positioned(
+                  bottom: 40,
+                  right: 30,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.6),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                          color: Colors.greenAccent.withOpacity(0.5), width: 2),
+                    ),
+                    child: IconButton(
+                      icon: const Icon(Icons.cameraswitch,
+                          color: Colors.white, size: 28),
+                      onPressed: () => provider.toggleCamera(),
+                    ),
                   ),
                 ),
-              ),
-            ],
-          );
-        },
+              ],
+            );
+          },
+        ),
       ),
     );
   }
 }
+

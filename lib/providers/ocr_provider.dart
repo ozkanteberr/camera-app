@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
@@ -11,70 +11,116 @@ class OcrProvider extends ChangeNotifier {
   List<CameraDescription> _cameras = [];
   bool _isInitialized = false;
   int _selectedCameraIndex = 0;
-
-  final TextRecognizer _textRecognizer = TextRecognizer();
   bool _isProcessing = false;
   bool _isViewActive = false;
+  bool _isStreamRunning = false;
 
+  final TextRecognizer _textRecognizer = TextRecognizer();
   RecognizedText? _recognizedText;
-  RecognizedText? get recognizedText => _recognizedText;
 
+  RecognizedText? get recognizedText => _recognizedText;
   CameraController? get controller => _controller;
   bool get isInitialized => _isInitialized;
 
   Future<void> initializeCameras() async {
-    _cameras = await availableCameras();
+    if (_controller != null) return;
 
-    if (_cameras.isNotEmpty) {
+    try {
+      _cameras = await availableCameras();
+      if (_cameras.isEmpty) return;
+
       _selectedCameraIndex = _cameras.indexWhere(
-          (camera) => camera.lensDirection == CameraLensDirection.back);
-
+        (camera) => camera.lensDirection == CameraLensDirection.back,
+      );
       if (_selectedCameraIndex == -1) _selectedCameraIndex = 0;
+
       await _setupCameraController();
+    } catch (e) {
+      debugPrint("OCR kamera hatası: $e");
     }
   }
 
   Future<void> _setupCameraController() async {
-    _controller = CameraController(
+    if (_cameras.isEmpty) return;
+
+    final oldController = _controller;
+    _controller = null;
+    _isInitialized = false;
+    _isStreamRunning = false;
+    notifyListeners();
+
+    if (oldController != null) {
+      try {
+        if (oldController.value.isStreamingImages) {
+          await oldController.stopImageStream();
+        }
+        await oldController.dispose();
+      } catch (e) {
+        debugPrint("Önceki OCR kamerası temizlenirken hata: $e");
+      }
+    }
+
+    final controller = CameraController(
       _cameras[_selectedCameraIndex],
       ResolutionPreset.high,
       enableAudio: false,
-      imageFormatGroup: Platform.isAndroid
-          ? ImageFormatGroup.nv21
-          : ImageFormatGroup.bgra8888,
+      imageFormatGroup:
+          Platform.isAndroid ? ImageFormatGroup.nv21 : ImageFormatGroup.bgra8888,
     );
+    _controller = controller;
 
-    await _controller!.initialize();
-    _isInitialized = true;
-    notifyListeners();
-    _startLiveStream();
+    try {
+      await controller.initialize();
+      if (_controller != controller) return;
+
+      _isInitialized = true;
+      notifyListeners();
+      _startLiveStream();
+    } catch (e) {
+      debugPrint("OCR kamera başlatılamadı: $e");
+    }
   }
 
   void _startLiveStream() {
-    _controller!.startImageStream((CameraImage image) async {
-      if (!_isViewActive || _isProcessing || _controller == null) return;
-      _isProcessing = true;
+    final controller = _controller;
+    if (controller == null || !_isInitialized || _isStreamRunning) return;
 
-      try {
-        final inputImage = await _inputImageFromCameraImage(image);
-        if (inputImage != null) {
+    try {
+      _isStreamRunning = true;
+      controller.startImageStream((CameraImage image) async {
+        if (!_isViewActive || _isProcessing) return;
+        if (_controller != controller || !controller.value.isInitialized) return;
+
+        _isProcessing = true;
+
+        try {
+          final inputImage = await _inputImageFromCameraImage(image);
+          if (!_isViewActive || _controller != controller || inputImage == null) {
+            return;
+          }
+
           final recognizedText = await _textRecognizer.processImage(inputImage);
+          if (!_isViewActive || _controller != controller) return;
+
           _recognizedText = recognizedText;
           notifyListeners();
+        } catch (e) {
+          if (_isViewActive) debugPrint("OCR Hata: $e");
+        } finally {
+          _isProcessing = false;
         }
-      } catch (e) {
-        debugPrint("OCR Hata: $e");
-      } finally {
-        _isProcessing = false;
-      }
-    });
+      });
+    } catch (e) {
+      _isStreamRunning = false;
+      debugPrint("OCR kamera akışı başlatılamadı: $e");
+    }
   }
 
   Future<InputImage?> _inputImageFromCameraImage(CameraImage image) async {
     if (_controller == null) return null;
     final camera = _cameras[_selectedCameraIndex];
 
-    InputImageRotation? rotation;
+    InputImageRotation rotation;
     final orientation = _controller!.value.deviceOrientation;
 
     if (camera.lensDirection == CameraLensDirection.front) {
@@ -108,17 +154,24 @@ class OcrProvider extends ChangeNotifier {
           break;
       }
     }
+
     final format =
         Platform.isAndroid ? InputImageFormat.nv21 : InputImageFormat.bgra8888;
     final bytes = await compute(_processBytes, image.planes.toList());
+
+    if (!_isViewActive || _controller == null) return null;
+
     final metadata = InputImageMetadata(
       size: Size(image.width.toDouble(), image.height.toDouble()),
       rotation: rotation,
       format: format,
       bytesPerRow: image.planes.first.bytesPerRow,
     );
+
     return InputImage.fromBytes(
-        bytes: Uint8List.fromList(bytes), metadata: metadata);
+      bytes: Uint8List.fromList(bytes),
+      metadata: metadata,
+    );
   }
 
   static List<int> _processBytes(List<Plane> planes) {
@@ -129,18 +182,45 @@ class OcrProvider extends ChangeNotifier {
     return allBytes.done().buffer.asUint8List();
   }
 
-  void setViewActive(bool active) => _isViewActive = active;
+  void setViewActive(bool active) {
+    _isViewActive = active;
+    if (!active) {
+      _recognizedText = null;
+    }
+  }
 
-  Future<void> releaseResources() async {
-    await _controller?.stopImageStream();
-    await _controller?.dispose();
+  Future<void> releaseResources({bool notify = true}) async {
+    _isViewActive = false;
+    _recognizedText = null;
+
+    final controller = _controller;
     _controller = null;
-    notifyListeners();
+    _isInitialized = false;
+    _isStreamRunning = false;
+    _isProcessing = false;
+    if (notify) notifyListeners();
+
+    if (controller == null) return;
+
+    try {
+      if (controller.value.isStreamingImages) {
+        await controller.stopImageStream();
+      }
+    } catch (e) {
+      debugPrint("OCR kamera akışı kapatılırken hata: $e");
+    }
+
+    try {
+      await controller.dispose();
+    } catch (e) {
+      debugPrint("OCR kamera dispose hatası: $e");
+    }
   }
 
   @override
   void dispose() {
     _textRecognizer.close();
+    _controller?.dispose();
     super.dispose();
   }
 }

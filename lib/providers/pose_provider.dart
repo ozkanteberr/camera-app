@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
@@ -13,17 +13,16 @@ class PoseProvider extends ChangeNotifier {
   int _selectedCameraIndex = 0;
   DateTime? _lastProcessedTime;
   bool _isViewActive = false;
-  bool get isViewActive => _isViewActive;
-
-  late PoseDetector _poseDetector;
   bool _isProcessing = false;
+  bool _isStreamRunning = false;
 
+  late final PoseDetector _poseDetector;
   List<Pose> _poses = [];
 
   List<Pose> get poses => _poses;
-
   CameraController? get controller => _controller;
   bool get isInitialized => _isInitialized;
+  bool get isViewActive => _isViewActive;
 
   PoseProvider() {
     final options = PoseDetectorOptions(mode: PoseDetectionMode.stream);
@@ -31,16 +30,18 @@ class PoseProvider extends ChangeNotifier {
   }
 
   Future<void> initializeCameras() async {
+    if (_controller != null) return;
+
     try {
       _cameras = await availableCameras();
+      if (_cameras.isEmpty) return;
 
-      if (_cameras.isNotEmpty) {
-        _selectedCameraIndex = _cameras.indexWhere(
-            (camera) => camera.lensDirection == CameraLensDirection.back);
-        if (_selectedCameraIndex == -1) _selectedCameraIndex = 0;
+      _selectedCameraIndex = _cameras.indexWhere(
+        (camera) => camera.lensDirection == CameraLensDirection.back,
+      );
+      if (_selectedCameraIndex == -1) _selectedCameraIndex = 0;
 
-        await _setupCameraController();
-      }
+      await _setupCameraController();
     } catch (e) {
       debugPrint("Kamera hatası: $e");
     }
@@ -48,21 +49,37 @@ class PoseProvider extends ChangeNotifier {
 
   Future<void> _setupCameraController() async {
     if (_cameras.isEmpty) return;
-    if (_controller != null) {
-      await _controller!.dispose();
+
+    final oldController = _controller;
+    _controller = null;
+    _isInitialized = false;
+    _isStreamRunning = false;
+    notifyListeners();
+
+    if (oldController != null) {
+      try {
+        if (oldController.value.isStreamingImages) {
+          await oldController.stopImageStream();
+        }
+        await oldController.dispose();
+      } catch (e) {
+        debugPrint("Önceki pose kamerası temizlenirken hata: $e");
+      }
     }
 
-    _controller = CameraController(
+    final controller = CameraController(
       _cameras[_selectedCameraIndex],
       ResolutionPreset.high,
       enableAudio: false,
-      imageFormatGroup: Platform.isAndroid
-          ? ImageFormatGroup.nv21
-          : ImageFormatGroup.bgra8888,
+      imageFormatGroup:
+          Platform.isAndroid ? ImageFormatGroup.nv21 : ImageFormatGroup.bgra8888,
     );
+    _controller = controller;
 
     try {
-      await _controller!.initialize();
+      await controller.initialize();
+      if (_controller != controller) return;
+
       _isInitialized = true;
       notifyListeners();
       _startLiveStream();
@@ -72,54 +89,54 @@ class PoseProvider extends ChangeNotifier {
   }
 
   void _startLiveStream() {
-    if (_controller == null || !_isInitialized) return;
+    final controller = _controller;
+    if (controller == null || !_isInitialized || _isStreamRunning) return;
 
-    _controller!.startImageStream((CameraImage image) async {
-      if (_controller == null || !_controller!.value.isInitialized) return;
-      if (!_isViewActive || _isProcessing) return;
-      final now = DateTime.now();
-      if (_lastProcessedTime != null &&
-          now.difference(_lastProcessedTime!).inMilliseconds < 150) {
-        return;
-      }
+    try {
+      _isStreamRunning = true;
+      controller.startImageStream((CameraImage image) async {
+        if (!_isViewActive || _isProcessing) return;
+        if (_controller != controller || !controller.value.isInitialized) return;
 
-      _isProcessing = true;
-      _lastProcessedTime = now;
+        final now = DateTime.now();
+        if (_lastProcessedTime != null &&
+            now.difference(_lastProcessedTime!).inMilliseconds < 150) {
+          return;
+        }
 
-      try {
-        debugPrint("Kare kameradan başarıyla alındı.");
+        _isProcessing = true;
+        _lastProcessedTime = now;
 
-        final inputImage = await _inputImageFromCameraImage(image);
+        try {
+          final inputImage = await _inputImageFromCameraImage(image);
+          if (!_isViewActive || _controller != controller) return;
 
-        if (inputImage != null) {
-          debugPrint(
-              "Kare ML Kit formatına çevrildi, AI motoruna gönderiliyor");
+          if (inputImage == null) return;
 
-          // Yapay zeka analizi
           final poses = await _poseDetector.processImage(inputImage);
-
-          debugPrint(
-              "AI analizi bitti! Algılanan iskelet sayısı: ${poses.length}");
+          if (!_isViewActive || _controller != controller) return;
 
           _poses = poses;
           notifyListeners();
-        } else {
-          debugPrint(
-              "Kare ML Kit formatına (InputImage) dönüştürülemedi ve null döndü!");
+        } catch (e) {
+          if (_isViewActive) {
+            debugPrint("İskelet analizinde hata: $e");
+          }
+        } finally {
+          _isProcessing = false;
         }
-      } catch (e) {
-        debugPrint("İskelet analizinde kritik hata: $e");
-      } finally {
-        _isProcessing = false;
-      }
-    });
+      });
+    } catch (e) {
+      _isStreamRunning = false;
+      debugPrint("Pose kamera akışı başlatılamadı: $e");
+    }
   }
 
   Future<InputImage?> _inputImageFromCameraImage(CameraImage image) async {
     if (_controller == null) return null;
     final camera = _cameras[_selectedCameraIndex];
 
-    InputImageRotation? rotation;
+    InputImageRotation rotation;
     final orientation = _controller!.value.deviceOrientation;
 
     if (camera.lensDirection == CameraLensDirection.front) {
@@ -156,9 +173,9 @@ class PoseProvider extends ChangeNotifier {
 
     final format =
         Platform.isAndroid ? InputImageFormat.nv21 : InputImageFormat.bgra8888;
-
-    // final plane = image.planes.first;
     final bytes = await compute(_processBytes, image.planes.toList());
+
+    if (!_isViewActive || _controller == null) return null;
 
     final metadata = InputImageMetadata(
       size: Size(image.width.toDouble(), image.height.toDouble()),
@@ -168,63 +185,80 @@ class PoseProvider extends ChangeNotifier {
     );
 
     return InputImage.fromBytes(
-        bytes: Uint8List.fromList(bytes), metadata: metadata);
+      bytes: Uint8List.fromList(bytes),
+      metadata: metadata,
+    );
   }
 
   Future<void> toggleCamera() async {
     if (_cameras.length < 2) return;
-    if (_controller != null && _controller!.value.isStreamingImages) {
-      await _controller!.stopImageStream();
-    }
+
+    await _stopLiveStream();
     _isInitialized = false;
     notifyListeners();
+
     _selectedCameraIndex = (_selectedCameraIndex + 1) % _cameras.length;
     await _setupCameraController();
   }
 
-  void setViewActive(bool active) async {
+  void setViewActive(bool active) {
     _isViewActive = active;
-
-    // Aktif değilse ve kamera akışta ise, akışı durdur
-    if (!active &&
-        _controller != null &&
-        _controller!.value.isStreamingImages) {
-      try {
-        await _controller!.stopImageStream();
-        debugPrint("Kamera akışı (Stream) tamamen durduruldu.");
-      } catch (e) {
-        debugPrint("Hata: $e");
-      }
-    }
-    // Eğer tekrar aktif olduysa ve kamera hazırsa, stream'i tekrar başlat
-    else if (active &&
-        _controller != null &&
+    if (!active) {
+      _poses = [];
+      notifyListeners();
+    } else if (_controller != null &&
+        _isInitialized &&
         !_controller!.value.isStreamingImages) {
       _startLiveStream();
-      debugPrint("Kamera akışı (Stream) tekrar başlatıldı.");
     }
   }
 
-  Future<void> releaseResources() async {
-    // Önce akışı durdur
-    if (_controller != null) {
-      if (_controller!.value.isStreamingImages) {
-        try {
-          await _controller!.stopImageStream();
-          debugPrint("Kamera akışı durduruldu.");
-        } catch (e) {
-          debugPrint("Akış durdurulamadı (zaten durmuş olabilir): $e");
-        }
-      }
-
-      // Ardından dispose et
-      if (_controller!.value.isInitialized) {
-        await _controller!.dispose();
-      }
-      _controller = null;
+  Future<void> _stopLiveStream() async {
+    final controller = _controller;
+    if (controller == null) {
+      _isStreamRunning = false;
+      _isProcessing = false;
+      return;
     }
+
+    try {
+      if (controller.value.isStreamingImages) {
+        await controller.stopImageStream();
+      }
+    } catch (e) {
+      debugPrint("Pose kamera akışı durdurulamadı: $e");
+    } finally {
+      _isStreamRunning = false;
+      _isProcessing = false;
+    }
+  }
+
+  Future<void> releaseResources({bool notify = true}) async {
+    _isViewActive = false;
+    _poses = [];
+
+    final controller = _controller;
+    _controller = null;
     _isInitialized = false;
-    notifyListeners();
+    _isStreamRunning = false;
+    _isProcessing = false;
+    if (notify) notifyListeners();
+
+    if (controller == null) return;
+
+    try {
+      if (controller.value.isStreamingImages) {
+        await controller.stopImageStream();
+      }
+    } catch (e) {
+      debugPrint("Pose kamera akışı kapatılırken hata: $e");
+    }
+
+    try {
+      await controller.dispose();
+    } catch (e) {
+      debugPrint("Pose kamera dispose hatası: $e");
+    }
   }
 
   static List<int> _processBytes(List<Plane> planes) {
@@ -242,3 +276,4 @@ class PoseProvider extends ChangeNotifier {
     super.dispose();
   }
 }
+
