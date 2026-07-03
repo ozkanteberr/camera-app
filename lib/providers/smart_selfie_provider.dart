@@ -54,6 +54,7 @@ class SmartSelfieProvider extends ChangeNotifier {
     await _flutterTts.setSpeechRate(0.48);
     await _flutterTts.setVolume(1.0);
     await _flutterTts.setPitch(1.0);
+    await _flutterTts.awaitSpeakCompletion(true);
     _flutterTts.setCompletionHandler(() => _isSpeaking = false);
     _flutterTts.setCancelHandler(() => _isSpeaking = false);
     _flutterTts.setErrorHandler((_) => _isSpeaking = false);
@@ -251,42 +252,42 @@ class SmartSelfieProvider extends ChangeNotifier {
 
   void _startCountdown() {
     if (_isCountingDown || _isCapturing || !_isViewActive) return;
+    _runCountdown();
+  }
 
+  Future<void> _runCountdown() async {
     _isCountingDown = true;
-    _countdown = 3;
-    notifyListeners();
-    _speakNow('3');
 
-    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
-      if (!_isViewActive) {
-        _cancelCountdown();
-        return;
-      }
+    for (var number = 3; number >= 1; number--) {
+      if (!_isViewActive || !_isCountingDown) return;
 
-      if (_countdown == null || _countdown! <= 1) {
-        timer.cancel();
-        _countdown = null;
-        notifyListeners();
-        await _captureSelfie();
-        return;
-      }
-
-      _countdown = _countdown! - 1;
+      _countdown = number;
       notifyListeners();
-      _speakNow(_countdown.toString());
-    });
+      await _speakNow(number.toString());
+
+      if (!_isViewActive || !_isCountingDown) return;
+      await Future.delayed(const Duration(milliseconds: 650));
+    }
+
+    _countdown = null;
+    notifyListeners();
+    await _captureSelfie();
   }
 
   Future<void> _speakNow(String message) async {
     if (!_isViewActive) return;
 
     try {
-      _isSpeaking = true;
       await _flutterTts.stop();
+      await Future.delayed(const Duration(milliseconds: 120));
+      if (!_isViewActive) return;
+
+      _isSpeaking = true;
       await _flutterTts.speak(message);
     } catch (e) {
-      _isSpeaking = false;
       debugPrint("Smart Selfie seslendirme hatası: $e");
+    } finally {
+      _isSpeaking = false;
     }
   }
 
@@ -463,3 +464,5 @@ class SmartSelfieProvider extends ChangeNotifier {
     super.dispose();
   }
 }
+
+
