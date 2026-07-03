@@ -3,7 +3,7 @@ import 'package:camera_app/screens/pose_screen.dart';
 import 'package:camera_app/screens/smart_selfie_screen.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
-import 'dart:ui';
+import 'package:flutter_screenutil_plus/flutter_screenutil_plus.dart';
 import 'camera_screen.dart';
 
 class HomeScreen extends StatelessWidget {
@@ -14,24 +14,24 @@ class HomeScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: Colors.grey[900],
       appBar: AppBar(
-        title: const Text("ML Kit Laboratuvarı",
-            style: TextStyle(fontWeight: FontWeight.bold)),
+        title: Text(
+          "ML Kit Laboratuvarı",
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18.sp),
+        ),
         centerTitle: true,
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
         elevation: 0,
         actions: [
           PopupMenuButton<Locale>(
-            icon: const Icon(Icons.language),
-            onSelected: (Locale locale) {
-              context.setLocale(locale); // Tüm uygulamada dili değiştirir
-            },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
+            icon: Icon(Icons.language, size: 24.r),
+            onSelected: (Locale locale) => context.setLocale(locale),
+            itemBuilder: (context) => const [
+              PopupMenuItem(
                 value: Locale('tr', 'TR'),
                 child: Text("🇹🇷 Türkçe"),
               ),
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: Locale('en', 'US'),
                 child: Text("🇺🇸 English"),
               ),
@@ -39,144 +39,172 @@ class HomeScreen extends StatelessWidget {
           ),
         ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              "home_screen_title".tr(),
-              style: TextStyle(color: Colors.white70, fontSize: 16),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 30),
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final isWide = constraints.maxWidth >= 620 ||
+                MediaQuery.orientationOf(context) == Orientation.landscape;
+            final horizontalPadding = isWide ? 28.w : 20.w;
+            final cardGap = isWide ? 14.w : 16.h;
+            final cardWidth = isWide
+                ? (constraints.maxWidth - (horizontalPadding * 2) - cardGap) / 2
+                : constraints.maxWidth - (horizontalPadding * 2);
 
-            // (Face Detection)
-            _buildMenuCard(
-              context,
-              title: "face_detection_title".tr(),
-              subtitle: "face_detection_subtitle".tr(),
-              icon: Icons.face_retouching_natural,
-              color: Colors.blueAccent,
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const CameraScreen()),
-                );
-              },
-            ),
-            const SizedBox(height: 16),
+            final cards = [
+              _buildMenuCard(
+                context,
+                width: cardWidth,
+                title: "face_detection_title".tr(),
+                subtitle: "face_detection_subtitle".tr(),
+                icon: Icons.face_retouching_natural,
+                color: Colors.blueAccent,
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) => const CameraScreen()),
+                  );
+                },
+              ),
+              _buildMenuCard(
+                context,
+                width: cardWidth,
+                title: "text_recognition_title".tr(),
+                subtitle: "text_recognition_subtitle".tr(),
+                icon: Icons.document_scanner,
+                color: Colors.orangeAccent,
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const OCRScreen()),
+                  );
+                },
+              ),
+              _buildMenuCard(
+                context,
+                width: cardWidth,
+                title: "pose_detection_title".tr(),
+                subtitle: "pose_detection_subtitle".tr(),
+                icon: Icons.accessibility_new,
+                color: Colors.greenAccent,
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const PoseScreen()),
+                  );
+                },
+              ),
+              _buildMenuCard(
+                context,
+                width: cardWidth,
+                title: "smart_selfie_title".tr(),
+                subtitle: "smart_selfie_subtitle".tr(),
+                icon: Icons.photo_camera_front_outlined,
+                color: Colors.yellowAccent,
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) => const SmartSelfieScreen()),
+                  );
+                },
+              ),
+            ];
 
-            //(Text Recognition)
-            _buildMenuCard(
-              context,
-              title: "text_recognition_title".tr(),
-              subtitle: "text_recognition_subtitle".tr(),
-              icon: Icons.document_scanner,
-              color: Colors.orangeAccent,
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const OCRScreen()),
-                );
-              },
-            ),
-            const SizedBox(height: 16),
-
-            //(Pose Detection)
-            _buildMenuCard(
-              context,
-              title: "pose_detection_title".tr(),
-              subtitle: "pose_detection_subtitle".tr(),
-              icon: Icons.accessibility_new,
-              color: Colors.greenAccent,
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const PoseScreen()),
-                );
-              },
-            ),
-
-            const SizedBox(height: 16),
-
-            _buildMenuCard(
-              context,
-              title: "smart_selfie_title".tr(),
-              subtitle: "smart_selfie_subtitle".tr(),
-              icon: Icons.photo_camera_front_outlined,
-              color: Colors.yellowAccent,
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (context) => const SmartSelfieScreen()),
-                );
-              },
-            ),
-          ],
+            return SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(
+                horizontalPadding,
+                20.h,
+                horizontalPadding,
+                24.h,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    "home_screen_title".tr(),
+                    style: TextStyle(color: Colors.white70, fontSize: 16.sp),
+                    textAlign: TextAlign.center,
+                  ),
+                  SizedBox(height: isWide ? 18.h : 30.h),
+                  Wrap(
+                    spacing: isWide ? cardGap : 0,
+                    runSpacing: isWide ? 14.h : 16.h,
+                    children: cards,
+                  ),
+                ],
+              ),
+            );
+          },
         ),
       ),
     );
   }
 
-  // Şık ve modern menü kartları oluşturan yardımcı widget
   Widget _buildMenuCard(
     BuildContext context, {
+    required double width,
     required String title,
     required String subtitle,
     required IconData icon,
-    required Color color, // Artık sadece ikonu renklendirecek
+    required Color color,
     required VoidCallback onTap,
   }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: const Color(
-              0xFF1E1E1E), // Bütün kartların arka planı mat koyu gri
-          borderRadius: BorderRadius.circular(15),
-          border: Border.all(color: color.withOpacity(0.35), width: 1.0),
-        ),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: color.withOpacity(
-                    0.15), // İkonun arkasında çok hafif bir yuvarlak
-                shape: BoxShape.circle,
+    return SizedBox(
+      width: width,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          constraints: BoxConstraints(minHeight: 96.h),
+          padding: EdgeInsets.all(18.r),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E1E1E),
+            borderRadius: BorderRadius.circular(15.r),
+            border: Border.all(color: color.withOpacity(0.35), width: 1.r),
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: EdgeInsets.all(12.r),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, color: color, size: 30.r),
               ),
-              child: Icon(icon, color: color, size: 32), // İkon kendi renginde
-            ),
-            const SizedBox(width: 20),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
+              SizedBox(width: 16.w),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 17.sp,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    subtitle,
-                    style: TextStyle(
-                      color: Colors.white70,
-                      fontSize: 13,
+                    SizedBox(height: 4.h),
+                    Text(
+                      subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13.sp,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-            const Icon(Icons.arrow_forward_ios,
-                color: Colors.white30, size: 16),
-          ],
+              SizedBox(width: 8.w),
+              Icon(Icons.arrow_forward_ios, color: Colors.white30, size: 15.r),
+            ],
+          ),
         ),
       ),
     );

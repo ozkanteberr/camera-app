@@ -1,5 +1,6 @@
-﻿import 'package:camera/camera.dart';
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_screenutil_plus/flutter_screenutil_plus.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:provider/provider.dart';
 import '../providers/ocr_provider.dart';
@@ -73,16 +74,16 @@ class _OCRScreenState extends State<OCRScreen> {
                     ),
                   ),
                 Positioned(
-                  top: 50,
-                  left: 20,
+                  top: 50.h,
+                  left: 20.w,
                   child: Container(
                     decoration: BoxDecoration(
                       color: Colors.black.withOpacity(0.5),
                       shape: BoxShape.circle,
                     ),
                     child: IconButton(
-                      icon: const Icon(Icons.arrow_back_ios_new,
-                          color: Colors.white, size: 20),
+                      icon: Icon(Icons.arrow_back_ios_new,
+                          color: Colors.white, size: 20.r),
                       onPressed: _closeScreen,
                     ),
                   ),

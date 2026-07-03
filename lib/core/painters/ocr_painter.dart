@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_screenutil_plus/flutter_screenutil_plus.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
 class OCRPainter extends CustomPainter {
@@ -13,10 +14,9 @@ class OCRPainter extends CustomPainter {
     // Kutucuk fırçası
     final paint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 3.0
+      ..strokeWidth = 3.r
       ..color = Colors.orangeAccent;
 
-    // Her bir metin bloğunu döngüyle gez
     for (final block in recognizedText.blocks) {
       // Koordinatları oranla (Scaling)
       final rect = _scaleRect(block.boundingBox, size, absoluteImageSize);
@@ -28,15 +28,15 @@ class OCRPainter extends CustomPainter {
       TextPainter(
         text: TextSpan(
           text: block.text,
-          style: const TextStyle(
+          style: TextStyle(
               color: Colors.white,
-              fontSize: 16,
+              fontSize: 16.sp,
               backgroundColor: Colors.orange),
         ),
         textDirection: TextDirection.ltr,
       )
         ..layout()
-        ..paint(canvas, Offset(rect.left, rect.top - 20));
+        ..paint(canvas, Offset(rect.left, rect.top - 20.h));
     }
   }
 

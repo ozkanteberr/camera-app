@@ -1,9 +1,10 @@
-﻿import 'dart:io';
+import 'dart:io';
 import 'dart:ui';
 import 'package:camera/camera.dart';
 import 'package:camera_app/providers/camera_provider.dart';
 import 'package:camera_app/screens/gallery_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_screenutil_plus/flutter_screenutil_plus.dart';
 import 'package:provider/provider.dart';
 import 'package:easy_localization/easy_localization.dart';
 
@@ -83,18 +84,18 @@ class _CameraScreenState extends State<CameraScreen> {
                   Align(
                     alignment: const Alignment(0.0, -0.65),
                     child: ClipRRect(
-                      borderRadius: BorderRadius.circular(20),
+                      borderRadius: BorderRadius.circular(20.r),
                       child: BackdropFilter(
                         filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
                         child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 32, vertical: 20),
+                          padding: EdgeInsets.symmetric(
+                              horizontal: 32.w, vertical: 20.h),
                           decoration: BoxDecoration(
                             color: Colors.black.withOpacity(0.5),
-                            borderRadius: BorderRadius.circular(20),
+                            borderRadius: BorderRadius.circular(20.r),
                             border: Border.all(
                                 color: Colors.white.withOpacity(0.3),
-                                width: 1.5),
+                                width: 1.5.r),
                           ),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
@@ -109,13 +110,13 @@ class _CameraScreenState extends State<CameraScreen> {
                                             ? Icons.face_retouching_off
                                             : Icons.face,
                                 color: Colors.white,
-                                size: 36,
+                                size: 36.r,
                               ),
-                              const SizedBox(width: 16),
+                              SizedBox(width: 16.w),
                               Text(provider.guidanceKey.tr(),
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                       color: Colors.white,
-                                      fontSize: 24,
+                                      fontSize: 24.sp,
                                       fontWeight: FontWeight.bold)),
                             ],
                           ),
@@ -124,43 +125,43 @@ class _CameraScreenState extends State<CameraScreen> {
                     ),
                   ),
                 Positioned(
-                  top: 50,
-                  left: 20,
+                  top: 50.h,
+                  left: 20.w,
                   child: Container(
                     decoration: BoxDecoration(
                         color: Colors.black.withOpacity(0.5),
                         shape: BoxShape.circle),
                     child: IconButton(
-                      icon: const Icon(Icons.arrow_back_ios_new,
-                          color: Colors.white, size: 20),
+                      icon: Icon(Icons.arrow_back_ios_new,
+                          color: Colors.white, size: 20.r),
                       onPressed: _closeScreen,
                     ),
                   ),
                 ),
                 Positioned(
-                  top: 50,
-                  right: 20,
+                  top: 50.h,
+                  right: 20.w,
                   child: Container(
                     decoration: BoxDecoration(
                         color: Colors.black.withOpacity(0.5),
                         shape: BoxShape.circle),
                     child: IconButton(
-                      icon: const Icon(Icons.photo_library,
-                          color: Colors.white, size: 22),
+                      icon: Icon(Icons.photo_library,
+                          color: Colors.white, size: 22.r),
                       onPressed: _openGallery,
                     ),
                   ),
                 ),
                 Positioned(
-                  bottom: 40,
-                  left: 20,
-                  right: 20,
+                  bottom: 40.h,
+                  left: 20.w,
+                  right: 20.w,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 20, vertical: 15),
+                    padding:
+                        EdgeInsets.symmetric(horizontal: 20.w, vertical: 15.h),
                     decoration: BoxDecoration(
                       color: Colors.black.withOpacity(0.6),
-                      borderRadius: BorderRadius.circular(30),
+                      borderRadius: BorderRadius.circular(30.r),
                     ),
                     child: provider.capturedImage != null
                         ? _buildConfirmRow(provider)
@@ -181,12 +182,12 @@ class _CameraScreenState extends State<CameraScreen> {
       children: [
         TextButton.icon(
           onPressed: () => provider.clearCapturedImage(),
-          icon: const Icon(Icons.close, color: Colors.redAccent),
+          icon: Icon(Icons.close, color: Colors.redAccent),
           label: Text("cancel".tr(), style: TextStyle(color: Colors.redAccent)),
         ),
         ElevatedButton.icon(
           onPressed: () async => await provider.saveCapturedImage(),
-          icon: const Icon(Icons.check, color: Colors.white),
+          icon: Icon(Icons.check, color: Colors.white),
           label: Text("confirm".tr(), style: TextStyle(color: Colors.white)),
           style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
         ),
@@ -199,7 +200,7 @@ class _CameraScreenState extends State<CameraScreen> {
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
         PopupMenuButton<ResolutionPreset>(
-          icon: const Icon(Icons.hd, color: Colors.white, size: 26),
+          icon: Icon(Icons.hd, color: Colors.white, size: 26.r),
           color: Colors.black87,
           initialValue: provider.selectedResolution,
           onSelected: (value) => provider.changeResolution(value),
@@ -223,25 +224,25 @@ class _CameraScreenState extends State<CameraScreen> {
         GestureDetector(
           onTap: () => provider.isTakingPicture ? null : provider.takePicture(),
           child: Container(
-            width: 66,
-            height: 66,
+            width: 66.r,
+            height: 66.r,
             decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 3)),
+                border: Border.all(color: Colors.white, width: 3.r)),
             child: Container(
-              margin: const EdgeInsets.all(5),
+              margin: EdgeInsets.all(5.r),
               decoration: BoxDecoration(
                   color: provider.isTakingPicture ? Colors.grey : Colors.white,
                   shape: BoxShape.circle),
               child: provider.isTakingPicture
-                  ? const CircularProgressIndicator(
-                      color: Colors.black, strokeWidth: 2.5)
+                  ? CircularProgressIndicator(
+                      color: Colors.black, strokeWidth: 2.5.r)
                   : null,
             ),
           ),
         ),
         IconButton(
-          icon: const Icon(Icons.cameraswitch, color: Colors.white, size: 26),
+          icon: Icon(Icons.cameraswitch, color: Colors.white, size: 26.r),
           onPressed: () => provider.toggleCamera(),
         ),
       ],

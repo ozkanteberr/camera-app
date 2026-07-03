@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_screenutil_plus/flutter_screenutil_plus.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 
 class PosePainter extends CustomPainter {
@@ -14,26 +15,26 @@ class PosePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 6.0
+      ..strokeWidth = 6.r
       ..color = Colors.greenAccent;
     final leftPaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 5.0
+      ..strokeWidth = 5.r
       ..color = Colors.yellowAccent;
     final rightPaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 5.0
+      ..strokeWidth = 5.r
       ..color = Colors.lightBlueAccent;
     final jointPaint = Paint()
       ..style = PaintingStyle.fill
       ..color = Colors.white;
 
     for (final pose in poses) {
-      // Eklem Noktalarını (Yuvarlaklar) Çiz
+      //  Eklem Noktalarını (Yuvarlaklar) Çiz
       pose.landmarks.forEach((_, landmark) {
         final x = translateX(landmark.x, size, absoluteImageSize);
         final y = translateY(landmark.y, size, absoluteImageSize);
-        canvas.drawCircle(Offset(x, y), 4.0, jointPaint);
+        canvas.drawCircle(Offset(x, y), 4.r, jointPaint);
       });
 
       //Kemikleri Çiz
@@ -96,7 +97,7 @@ class PosePainter extends CustomPainter {
         : scaledX; // Ön kameraysa ekseni ters çevir!
   }
 
-  // y ekseni - Oranlama Düzeltmesi
+  // y ekseni -Oranlama Düzeltmesi
   double translateY(double y, Size canvasSize, Size imageSize) {
     return y * canvasSize.height / imageSize.height;
   }

@@ -1,4 +1,4 @@
-﻿import 'dart:io';
+import 'dart:io';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
@@ -95,8 +95,9 @@ class CameraProvider extends ChangeNotifier {
       _cameras[_selectedCameraIndex],
       _selectedResolution,
       enableAudio: false,
-      imageFormatGroup:
-          Platform.isAndroid ? ImageFormatGroup.nv21 : ImageFormatGroup.bgra8888,
+      imageFormatGroup: Platform.isAndroid
+          ? ImageFormatGroup.nv21
+          : ImageFormatGroup.bgra8888,
     );
     _controller = controller;
 
@@ -123,7 +124,9 @@ class CameraProvider extends ChangeNotifier {
       _isProcessing = false;
       controller.startImageStream((CameraImage image) async {
         if (!_isViewActive || _isProcessing) return;
-        if (_controller != controller || !controller.value.isInitialized) return;
+        if (_controller != controller || !controller.value.isInitialized) {
+          return;
+        }
 
         final now = DateTime.now();
         if (_lastProcessedTime != null &&

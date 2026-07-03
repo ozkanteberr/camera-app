@@ -6,6 +6,7 @@ import 'package:camera_app/providers/smart_selfie_provider.dart';
 import 'package:camera_app/screens/home_screen.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_screenutil_plus/flutter_screenutil_plus.dart';
 import 'package:provider/provider.dart';
 
 void main() async {
@@ -15,6 +16,7 @@ void main() async {
   await EasyLocalization.ensureInitialized();
   // hive başlat
   await AppStorage.appStorageInitialize();
+
   runApp(
     EasyLocalization(
       supportedLocales: const [Locale('en', 'US'), Locale('tr', 'TR')],
@@ -39,17 +41,25 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'Kamera App',
-      localizationsDelegates: context.localizationDelegates,
-      supportedLocales: context.supportedLocales,
-      locale: context.locale,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-        useMaterial3: true,
-      ),
-      home: HomeScreen(),
+    return ScreenUtilPlusInit(
+      designSize: const Size(390, 844),
+      minTextAdapt: true,
+      splitScreenMode: true,
+      builder: (context, child) {
+        return MaterialApp(
+          debugShowCheckedModeBanner: false,
+          title: 'Kamera App',
+          localizationsDelegates: context.localizationDelegates,
+          supportedLocales: context.supportedLocales,
+          locale: context.locale,
+          theme: ThemeData(
+            colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+            useMaterial3: true,
+          ),
+          home: child,
+        );
+      },
+      child: const HomeScreen(),
     );
   }
 }

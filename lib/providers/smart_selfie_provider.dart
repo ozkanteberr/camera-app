@@ -1,4 +1,3 @@
-﻿import 'dart:async';
 import 'dart:io';
 
 import 'package:camera/camera.dart';
@@ -23,7 +22,8 @@ class SmartSelfieProvider extends ChangeNotifier {
   String _guidanceKey = 'yuz_bulunamadi';
   int? _countdown;
   DateTime? _lastProcessedTime;
-  Timer? _countdownTimer;
+  Rect? _faceBoundingBox;
+  Size? _cameraImageSize;
 
   late final FaceDetector _faceDetector;
   final FlutterTts _flutterTts = FlutterTts();
@@ -38,6 +38,8 @@ class SmartSelfieProvider extends ChangeNotifier {
   bool get isCapturing => _isCapturing;
   String get guidanceKey => _guidanceKey;
   int? get countdown => _countdown;
+  Rect? get faceBoundingBox => _faceBoundingBox;
+  Size? get cameraImageSize => _cameraImageSize;
 
   SmartSelfieProvider() {
     _faceDetector = FaceDetector(
@@ -74,6 +76,7 @@ class SmartSelfieProvider extends ChangeNotifier {
     _isViewActive = active;
     if (!active) {
       _cancelCountdown();
+      _clearFaceOverlay(notify: false);
       _stopSpeaking();
     }
   }
@@ -132,17 +135,20 @@ class SmartSelfieProvider extends ChangeNotifier {
   }
 
   void _startLiveStream() {
-    if (_controller == null || !_isInitialized || _isStreamRunning) return;
+    final controller = _controller;
+    if (controller == null || !_isInitialized || _isStreamRunning) return;
 
     try {
       _isStreamRunning = true;
-      _controller!.startImageStream((CameraImage image) async {
+      controller.startImageStream((CameraImage image) async {
         if (!_isViewActive ||
             _isProcessing ||
             _isCountingDown ||
             _isCapturing) {
           return;
         }
+        if (_controller != controller || !controller.value.isInitialized)
+          return;
 
         final now = DateTime.now();
         if (_lastProcessedTime != null &&
@@ -156,7 +162,9 @@ class SmartSelfieProvider extends ChangeNotifier {
         try {
           await _processFrame(image);
         } catch (e) {
-          debugPrint("Smart Selfie kare işlenirken hata: $e");
+          if (_isViewActive) {
+            debugPrint("Smart Selfie kare işlenirken hata: $e");
+          }
         } finally {
           _isProcessing = false;
         }
@@ -170,6 +178,7 @@ class SmartSelfieProvider extends ChangeNotifier {
   Future<void> _processFrame(CameraImage image) async {
     final inputImage = _inputImageFromCameraImage(image);
     if (inputImage == null) {
+      _clearFaceOverlay();
       _updateGuidanceState('yuz_bulunamadi');
       return;
     }
@@ -178,16 +187,25 @@ class SmartSelfieProvider extends ChangeNotifier {
     if (!_isViewActive) return;
 
     if (faces.isEmpty) {
+      _clearFaceOverlay();
       _updateGuidanceState('yuz_bulunamadi');
       return;
     }
 
     if (faces.length > 1) {
+      _clearFaceOverlay();
       _updateGuidanceState('multiple_faces');
       return;
     }
 
     final face = faces.first;
+    final rotatedImageSize =
+        Size(image.height.toDouble(), image.width.toDouble());
+    _updateFaceOverlay(
+      face.boundingBox,
+      rotatedImageSize,
+    );
+
     final eulerY = face.headEulerAngleY;
     if (eulerY == null) {
       _updateGuidanceState('yuz_bulunamadi');
@@ -204,19 +222,51 @@ class SmartSelfieProvider extends ChangeNotifier {
       return;
     }
 
-    final centerY = face.boundingBox.center.dy / image.height;
-    if (centerY < 0.36) {
+    final faceCenter = face.boundingBox.center;
+    final centerX = faceCenter.dx / rotatedImageSize.width;
+    final centerY = faceCenter.dy / rotatedImageSize.height;
+    const targetX = 0.5;
+    const targetY = 0.44;
+    const horizontalTolerance = 0.14;
+    const verticalTolerance = 0.12;
+
+    if (centerY < targetY - verticalTolerance) {
       _updateGuidanceState('asagi_indir');
       return;
     }
 
-    if (centerY > 0.64) {
+    if (centerY > targetY + verticalTolerance) {
       _updateGuidanceState('yukari_kaldir');
+      return;
+    }
+
+    if ((centerX - targetX).abs() > horizontalTolerance) {
+      _updateGuidanceState('duz_bak');
       return;
     }
 
     _updateGuidanceState('harika_bekle');
     _startCountdown();
+  }
+
+  void _updateFaceOverlay(Rect boundingBox, Size imageSize) {
+    final previousBox = _faceBoundingBox;
+    final movedEnough = previousBox == null ||
+        (previousBox.center - boundingBox.center).distance > 8 ||
+        (previousBox.width - boundingBox.width).abs() > 8 ||
+        (previousBox.height - boundingBox.height).abs() > 8;
+
+    _faceBoundingBox = boundingBox;
+    _cameraImageSize = imageSize;
+
+    if (movedEnough) notifyListeners();
+  }
+
+  void _clearFaceOverlay({bool notify = true}) {
+    if (_faceBoundingBox == null && _cameraImageSize == null) return;
+    _faceBoundingBox = null;
+    _cameraImageSize = null;
+    if (notify) notifyListeners();
   }
 
   void _updateGuidanceState(String newKey) {
@@ -316,7 +366,7 @@ class SmartSelfieProvider extends ChangeNotifier {
       notifyListeners();
       await _speakNow(_spokenMessages['kaydedildi'] ?? 'kaydedildi');
     } catch (e) {
-      debugPrint("Smart Selfie Ã§ekim/kayÄ±t hatasÄ±: $e");
+      debugPrint("Smart Selfie çekim/kayıt hatası: $e");
     } finally {
       _isCapturing = false;
       _isCountingDown = false;
@@ -349,7 +399,7 @@ class SmartSelfieProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> releaseResources() async {
+  Future<void> releaseResources({bool notify = true}) async {
     _isViewActive = false;
     _cancelCountdown();
     await _stopSpeaking();
@@ -359,7 +409,8 @@ class SmartSelfieProvider extends ChangeNotifier {
     _isInitialized = false;
     _isStreamRunning = false;
     _isProcessing = false;
-    notifyListeners();
+    _clearFaceOverlay(notify: false);
+    if (notify) notifyListeners();
 
     if (controller == null) return;
 
@@ -379,8 +430,6 @@ class SmartSelfieProvider extends ChangeNotifier {
   }
 
   void _cancelCountdown() {
-    _countdownTimer?.cancel();
-    _countdownTimer = null;
     _isCountingDown = false;
     _countdown = null;
   }
@@ -457,12 +506,9 @@ class SmartSelfieProvider extends ChangeNotifier {
 
   @override
   void dispose() {
-    _countdownTimer?.cancel();
     _faceDetector.close();
     _flutterTts.stop();
     _controller?.dispose();
     super.dispose();
   }
 }
-
-
