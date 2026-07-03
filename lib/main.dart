@@ -1,7 +1,8 @@
-import 'package:camera_app/core/storage/app_storage.dart';
+﻿import 'package:camera_app/core/storage/app_storage.dart';
 import 'package:camera_app/providers/camera_provider.dart';
 import 'package:camera_app/providers/ocr_provider.dart';
 import 'package:camera_app/providers/pose_provider.dart';
+import 'package:camera_app/providers/smart_selfie_provider.dart';
 import 'package:camera_app/screens/home_screen.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
@@ -24,7 +25,8 @@ void main() async {
           ChangeNotifierProvider(
               create: (_) => CameraProvider()..loadSavedPhotos()),
           ChangeNotifierProvider(create: (_) => PoseProvider()),
-          ChangeNotifierProvider(create: (_) => OcrProvider())
+          ChangeNotifierProvider(create: (_) => OcrProvider()),
+          ChangeNotifierProvider(create: (_) => SmartSelfieProvider()),
         ],
         child: const MyApp(),
       ),

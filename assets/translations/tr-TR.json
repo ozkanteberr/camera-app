@@ -13,8 +13,16 @@
   "text_recognition_subtitle": "Kameradaki yazıları canlı olarak metne çevirir.",
   "pose_detection_title": "İskelet & Hareket Tespiti",
   "pose_detection_subtitle": "Vücut eklemlerini ve hareketleri algılar.",
+  "smart_selfie_title":"Akıllı Özçekim",
+  "smart_selfie_subtitle":"Sesli özçekim asistanı",
   "low":"Düşük",
   "medium":"Orta",
   "high":"Yüksek",
-  "max":"Çok yüksek"
+  "max":"Çok yüksek",
+  "multiple_faces": "Karede birden fazla yüz var",
+  "yukari_kaldir": "Kamerayı biraz yukarı kaldırın",
+  "asagi_indir": "Kamerayı biraz aşağı indirin",
+  "harika_bekle": "Harika, kıpırdamayın",
+  "cekiliyor": "Çekiliyor",
+  "kaydedildi": "Selfie galeriye kaydedildi"
 }

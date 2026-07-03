@@ -1,5 +1,6 @@
-import 'package:camera_app/screens/ocr_screen.dart';
+﻿import 'package:camera_app/screens/ocr_screen.dart';
 import 'package:camera_app/screens/pose_screen.dart';
+import 'package:camera_app/screens/smart_selfie_screen.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'dart:ui';
@@ -93,6 +94,23 @@ class HomeScreen extends StatelessWidget {
                 Navigator.push(
                   context,
                   MaterialPageRoute(builder: (context) => const PoseScreen()),
+                );
+              },
+            ),
+
+            const SizedBox(height: 16),
+
+            _buildMenuCard(
+              context,
+              title: "smart_selfie_title".tr(),
+              subtitle: "smart_selfie_subtitle".tr(),
+              icon: Icons.photo_camera_front_outlined,
+              color: Colors.yellowAccent,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (context) => const SmartSelfieScreen()),
                 );
               },
             ),
