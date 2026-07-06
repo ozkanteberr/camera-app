@@ -3,16 +3,16 @@ cmake_minimum_required(VERSION 3.4.1)
 project(panorama_stitcher_library VERSION 0.0.1 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 
-set(OPENCV_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/opencv")
-set(OPENCV_LIB "${OPENCV_ROOT}/libs/${ANDROID_ABI}/libopencv_java4.so")
-
-if(NOT EXISTS "${OPENCV_LIB}")
-  message(FATAL_ERROR "OpenCV library not found for ABI ${ANDROID_ABI}: ${OPENCV_LIB}")
+# OpenCV Android SDK is required for the C++ Stitcher API.
+# Preferred portable setup for another machine:
+#   set OPENCV_ANDROID_SDK=C:/path/to/OpenCV-android-sdk
+if(DEFINED ENV{OPENCV_ANDROID_SDK})
+  set(OpenCV_DIR "$ENV{OPENCV_ANDROID_SDK}/sdk/native/jni")
+elseif(NOT DEFINED OpenCV_DIR)
+  set(OpenCV_DIR "C:/Users/asus/Downloads/opencv-4.9.0-android-sdk/OpenCV-android-sdk/sdk/native/jni")
 endif()
 
-add_library(opencv_java4 SHARED IMPORTED)
-set_target_properties(opencv_java4 PROPERTIES IMPORTED_LOCATION "${OPENCV_LIB}")
+find_package(OpenCV REQUIRED)
 
 add_library(panorama_stitcher SHARED "panorama_stitcher.cpp")
-target_include_directories(panorama_stitcher PRIVATE "${OPENCV_ROOT}/include")
-target_link_libraries(panorama_stitcher opencv_java4 log)
+target_link_libraries(panorama_stitcher ${OpenCV_LIBS} log)

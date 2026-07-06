@@ -11,10 +11,13 @@ import 'package:sensors_plus/sensors_plus.dart';
 Uint8List? _processPanoramaInBackground(_) => PanoramaStitcher.process();
 
 class PanoramaProvider extends ChangeNotifier {
-  static const int _progressTargetFrames = 24;
-  static const int _minFrameIntervalMs = 700;
-  static const double _rotationPerFrameRadians = 0.18;
-  static const double _minUsefulAngularVelocity = 0.12;
+  static const int _progressTargetFrames = 18;
+  static const int _minStitchFrames = 4;
+  static const int _minFrameIntervalMs = 320;
+  static const double _rotationPerFrameRadians = 0.11;
+  static const double _minUsefulAngularVelocity = 0.10;
+  static const double _maxUsefulAngularVelocity = 1.25;
+  static const double _flatPhoneThreshold = 4.2;
 
   CameraController? _controller;
   List<CameraDescription> _cameras = [];
@@ -23,18 +26,22 @@ class PanoramaProvider extends ChangeNotifier {
 
   bool _isCapturing = false;
   bool _isProcessing = false;
+  bool _isAddingFrame = false;
+  bool _isAutoCompleting = false;
   int _frameCount = 0;
   String _guidanceKey = 'panorama_start';
 
   StreamSubscription? _accelSub;
   StreamSubscription? _gyroSub;
   double _accumulatedRotation = 0.0;
+  double _smoothedTiltZ = 0.0;
   bool _isPhoneStraight = true;
   bool _shouldCaptureNextFrame = false;
   bool _shouldCaptureInitialFrame = false;
-  bool _isAddingFrame = false;
   DateTime? _lastFrameCapturedAt;
+  DateTime? _lastFrameAttemptedAt;
   DateTime? _lastGyroTime;
+  DateTime? _lastMotionGuidanceAt;
 
   CameraController? get controller => _controller;
   bool get isInitialized => _isInitialized;
@@ -42,7 +49,11 @@ class PanoramaProvider extends ChangeNotifier {
   bool get isCapturing => _isCapturing;
   int get frameCount => _frameCount;
   int get progressTargetFrames => _progressTargetFrames;
+  int get minStitchFrames => _minStitchFrames;
   String get guidanceKey => _guidanceKey;
+  double get captureProgress =>
+      (_frameCount / _progressTargetFrames).clamp(0.0, 1.0).toDouble();
+  bool get canFinishCapture => _frameCount >= _minStitchFrames;
 
   void setViewActive(bool active) {
     _isViewActive = active;
@@ -51,8 +62,7 @@ class PanoramaProvider extends ChangeNotifier {
       _startSensor();
     } else {
       _stopSensor();
-      _cancelCapture();
-      releaseResources(notify: false);
+      unawaited(releaseResources(notify: false));
     }
   }
 
@@ -62,17 +72,27 @@ class PanoramaProvider extends ChangeNotifier {
     _accelSub = accelerometerEventStream().listen((AccelerometerEvent event) {
       if (!_isCapturing) return;
 
-      if (event.z.abs() > 2.5) {
-        _isPhoneStraight = false;
-        _updateGuidance('hold_phone_upright');
+      final tiltZ = event.z.abs();
+      _smoothedTiltZ = _smoothedTiltZ == 0.0
+          ? tiltZ
+          : (_smoothedTiltZ * 0.82) + (tiltZ * 0.18);
+      final isStraight = _smoothedTiltZ < _flatPhoneThreshold;
+
+      if (_isPhoneStraight == isStraight) return;
+
+      _isPhoneStraight = isStraight;
+      if (!_isPhoneStraight) {
+        _lastGyroTime = null;
+        _accumulatedRotation = 0.0;
+        _shouldCaptureNextFrame = false;
+        _updateGuidance('hold_phone_upright', force: true);
       } else {
-        _isPhoneStraight = true;
-        _updateGuidance('rotate_at_constant_speed');
+        _updateGuidance('rotate_at_constant_speed', force: true);
       }
     });
 
     _gyroSub = gyroscopeEventStream().listen((GyroscopeEvent event) {
-      if (!_isCapturing || !_isPhoneStraight) return;
+      if (!_isCapturing) return;
 
       final now = DateTime.now();
       final elapsedSeconds = _lastGyroTime == null
@@ -80,16 +100,30 @@ class PanoramaProvider extends ChangeNotifier {
           : now.difference(_lastGyroTime!).inMicroseconds / 1000000.0;
       _lastGyroTime = now;
 
+      if (!_isPhoneStraight || elapsedSeconds <= 0.0) return;
+
       final angularVelocity =
           event.y.abs() > event.z.abs() ? event.y.abs() : event.z.abs();
-      if (angularVelocity < _minUsefulAngularVelocity) return;
 
-      _accumulatedRotation += angularVelocity * elapsedSeconds;
+      if (angularVelocity < _minUsefulAngularVelocity) {
+        _showMotionGuidance('panorama_rotate_faster');
+        return;
+      }
+
+      if (angularVelocity > _maxUsefulAngularVelocity) {
+        _accumulatedRotation = 0.0;
+        _shouldCaptureNextFrame = false;
+        _showMotionGuidance('panorama_rotate_slower');
+        return;
+      }
+
+      _showMotionGuidance('rotate_at_constant_speed');
+      final cappedElapsedSeconds = elapsedSeconds.clamp(0.0, 0.08).toDouble();
+      _accumulatedRotation += angularVelocity * cappedElapsedSeconds;
 
       if (_accumulatedRotation >= _rotationPerFrameRadians) {
         _accumulatedRotation = 0.0;
         _shouldCaptureNextFrame = true;
-
       }
     });
   }
@@ -97,6 +131,8 @@ class PanoramaProvider extends ChangeNotifier {
   void _stopSensor() {
     _accelSub?.cancel();
     _gyroSub?.cancel();
+    _accelSub = null;
+    _gyroSub = null;
   }
 
   Future<void> initializeCameras() async {
@@ -107,12 +143,13 @@ class PanoramaProvider extends ChangeNotifier {
       if (_cameras.isEmpty) return;
 
       final backCameraIndex = _cameras.indexWhere(
-          (camera) => camera.lensDirection == CameraLensDirection.back);
+        (camera) => camera.lensDirection == CameraLensDirection.back,
+      );
 
       await _setupCameraController(backCameraIndex == -1 ? 0 : backCameraIndex);
       PanoramaStitcher.init();
     } catch (e) {
-      debugPrint("Panorama Kamera hatası: $e");
+      debugPrint('Panorama camera error: $e');
     }
   }
 
@@ -121,64 +158,92 @@ class PanoramaProvider extends ChangeNotifier {
       _cameras[index],
       ResolutionPreset.medium,
       enableAudio: false,
-      imageFormatGroup: Platform.isAndroid
-          ? ImageFormatGroup.nv21
-          : ImageFormatGroup.bgra8888,
+      imageFormatGroup:
+          Platform.isAndroid ? ImageFormatGroup.nv21 : ImageFormatGroup.bgra8888,
     );
 
     try {
       await _controller!.initialize();
       _isInitialized = true;
       notifyListeners();
-      _startLiveStream();
-
     } catch (e) {
-      debugPrint("Kamera başlatılamadı: $e");
+      debugPrint('Panorama camera could not start: $e');
     }
   }
 
-  void _startLiveStream() {
-    if (!_isInitialized || _controller == null) return;
+  Future<void> _startLiveStream() async {
+    final controller = _controller;
+    if (!_isInitialized || controller == null) return;
+    if (controller.value.isStreamingImages) return;
 
     try {
-      _controller!.startImageStream((CameraImage image) async {
-        if (!_isViewActive ||
-            _isProcessing ||
-            !_isCapturing ||
-            !_isPhoneStraight ||
-            _isAddingFrame) {
-          return;
-        }
-
-        if (!_shouldCaptureInitialFrame && !_shouldCaptureNextFrame) return;
-
-        final now = DateTime.now();
-        if (_lastFrameCapturedAt != null &&
-            now.difference(_lastFrameCapturedAt!).inMilliseconds <
-                _minFrameIntervalMs) {
-          return;
-        }
-
-        _isAddingFrame = true;
-        try {
-          final bytes = _processBytes(image);
-          final nextFrameCount =
-              PanoramaStitcher.addFrame(bytes, image.width, image.height);
-          if (nextFrameCount <= _frameCount) return;
-
-          _frameCount = nextFrameCount;
-          _lastFrameCapturedAt = now;
-          _shouldCaptureInitialFrame = false;
-          _shouldCaptureNextFrame = false;
-          notifyListeners();
-        } catch (e) {
-          debugPrint("Panorama karesi eklenemedi: $e");
-        } finally {
-          _isAddingFrame = false;
-        }
-      });
+      await controller.startImageStream(_handleCameraImage);
     } catch (e) {
-      debugPrint("Akış başlatılamadı: $e");
+      debugPrint('Panorama image stream could not start: $e');
+    }
+  }
+
+  Future<void> _stopLiveStream() async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isStreamingImages) return;
+
+    try {
+      await controller.stopImageStream();
+    } catch (e) {
+      debugPrint('Panorama image stream could not stop: $e');
+    }
+  }
+
+  void _handleCameraImage(CameraImage image) {
+    if (!_isViewActive ||
+        _isProcessing ||
+        !_isCapturing ||
+        !_isPhoneStraight ||
+        _isAddingFrame) {
+      return;
+    }
+
+    if (!_shouldCaptureInitialFrame && !_shouldCaptureNextFrame) return;
+
+    final now = DateTime.now();
+    if (_lastFrameAttemptedAt != null &&
+        now.difference(_lastFrameAttemptedAt!).inMilliseconds <
+            _minFrameIntervalMs) {
+      return;
+    }
+
+    _isAddingFrame = true;
+    _lastFrameAttemptedAt = now;
+    try {
+      final bytes = _processBytes(image);
+      final nextFrameCount =
+          PanoramaStitcher.addFrame(bytes, image.width, image.height);
+
+      if (nextFrameCount <= _frameCount) {
+        _shouldCaptureNextFrame = false;
+        if (_frameCount == 0) {
+          _updateGuidance('panorama_hold_steady');
+        } else {
+          _showMotionGuidance('panorama_keep_moving');
+        }
+        return;
+      }
+
+      _frameCount = nextFrameCount;
+      _lastFrameCapturedAt = now;
+      _shouldCaptureInitialFrame = false;
+      _shouldCaptureNextFrame = false;
+      _updateGuidance('rotate_at_constant_speed');
+      notifyListeners();
+
+      if (_frameCount >= _progressTargetFrames && !_isAutoCompleting) {
+        _isAutoCompleting = true;
+        unawaited(Future<void>.microtask(stopAndStitch));
+      }
+    } catch (e) {
+      debugPrint('Panorama frame could not be added: $e');
+    } finally {
+      _isAddingFrame = false;
     }
   }
 
@@ -229,86 +294,104 @@ class PanoramaProvider extends ChangeNotifier {
     return nv21;
   }
 
-  void startCapture() {
-    PanoramaStitcher.clear();
-    _frameCount = 0;
-    _accumulatedRotation = 0.0;
-    _shouldCaptureNextFrame = false;
-    _shouldCaptureInitialFrame = true;
-    _lastFrameCapturedAt = null;
-    _lastGyroTime = null;
-    _isCapturing = true;
-    _updateGuidance('rotate_at_constant_speed');
+  Future<void> startCapture() async {
+    if (_isProcessing || _isCapturing || !_isInitialized) return;
 
+    PanoramaStitcher.clear();
+    _resetCaptureState(resetGuidance: false);
+    _smoothedTiltZ = 0.0;
+    _isPhoneStraight = true;
+    _shouldCaptureInitialFrame = true;
+    _isCapturing = true;
+    _updateGuidance('rotate_at_constant_speed', force: true);
+    await _startLiveStream();
   }
 
   Future<void> stopAndStitch() async {
-    if (!_isCapturing || _frameCount < 2) {
-      _cancelCapture();
+    if (!_isCapturing) return;
+
+    if (_frameCount < _minStitchFrames) {
+      _updateGuidance('panorama_need_more_frames', force: true);
       return;
     }
 
     _isCapturing = false;
     _isProcessing = true;
-    _updateGuidance('merging');
+    _updateGuidance('merging', force: true);
     notifyListeners();
 
     try {
-      await Future.delayed(const Duration(milliseconds: 100));
+      await _stopLiveStream();
       final stitchedBytes = await compute(_processPanoramaInBackground, null);
 
       if (stitchedBytes != null) {
         final tempDir = Directory.systemTemp;
         final file = File(
-            '${tempDir.path}/panorama_${DateTime.now().millisecondsSinceEpoch}.jpg');
+          '${tempDir.path}/panorama_${DateTime.now().millisecondsSinceEpoch}.jpg',
+        );
         await file.writeAsBytes(stitchedBytes);
 
         final box = Hive.box<String>('photosBox');
         await box.add(file.path);
 
-        _resetCaptureState();
-        _updateGuidance('saved');
+        _resetCaptureState(resetGuidance: false);
+        _updateGuidance('saved', force: true);
       } else {
-        _updateGuidance('merge_failed');
+        _resetCaptureState(resetGuidance: false);
+        _updateGuidance('merge_failed', force: true);
       }
     } catch (e) {
-      debugPrint("Birleştirme hatası: $e");
-      _updateGuidance('merge_failed');
+      debugPrint('Panorama stitch error: $e');
+      _updateGuidance('merge_failed', force: true);
     } finally {
       _isProcessing = false;
+      _isAutoCompleting = false;
       notifyListeners();
     }
   }
 
-  void _resetCaptureState() {
+  void _resetCaptureState({bool resetGuidance = true}) {
     _isCapturing = false;
     _frameCount = 0;
     _accumulatedRotation = 0.0;
     _shouldCaptureNextFrame = false;
     _shouldCaptureInitialFrame = false;
+    _isAutoCompleting = false;
     _lastFrameCapturedAt = null;
+    _lastFrameAttemptedAt = null;
     _lastGyroTime = null;
-  }
-  void _cancelCapture() {
-    _isCapturing = false;
-    _frameCount = 0;
-    _accumulatedRotation = 0.0;
-    _shouldCaptureNextFrame = false;
-    _shouldCaptureInitialFrame = false;
-    _lastFrameCapturedAt = null;
-    _lastGyroTime = null;
-    _updateGuidance('panorama_start');
+    _lastMotionGuidanceAt = null;
+    if (resetGuidance) {
+      _guidanceKey = 'panorama_start';
+    }
   }
 
-  void _updateGuidance(String key) {
-    if (_guidanceKey != key) {
-      _guidanceKey = key;
-      notifyListeners();
+  void _cancelCapture({bool notify = true}) {
+    _resetCaptureState();
+    unawaited(_stopLiveStream());
+    if (notify) notifyListeners();
+  }
+
+  void _showMotionGuidance(String key) {
+    final now = DateTime.now();
+    if (_lastMotionGuidanceAt != null &&
+        now.difference(_lastMotionGuidanceAt!).inMilliseconds < 650) {
+      return;
     }
+    _lastMotionGuidanceAt = now;
+    _updateGuidance(key);
+  }
+
+  void _updateGuidance(String key, {bool force = false}) {
+    if (!force && _guidanceKey == key) return;
+    _guidanceKey = key;
+    notifyListeners();
   }
 
   Future<void> releaseResources({bool notify = true}) async {
     _isViewActive = false;
+    _stopSensor();
+    _resetCaptureState();
     final controller = _controller;
     _controller = null;
     _isInitialized = false;
