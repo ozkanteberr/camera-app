@@ -147,8 +147,9 @@ class SmartSelfieProvider extends ChangeNotifier {
             _isCapturing) {
           return;
         }
-        if (_controller != controller || !controller.value.isInitialized)
+        if (_controller != controller || !controller.value.isInitialized) {
           return;
+        }
 
         final now = DateTime.now();
         if (_lastProcessedTime != null &&

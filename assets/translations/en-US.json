@@ -24,5 +24,13 @@
   "asagi_indir": "Lower the camera a little",
   "harika_bekle": "Great, hold still",
   "cekiliyor": "Taking photo",
-  "kaydedildi": "Selfie saved to gallery"
+  "kaydedildi": "Selfie saved to gallery",
+  "panorama_title":"Panoramic photo",
+  "panorama_subtitle" : "Take panoramic photos",
+  "panorama_start": "Panorama Start",
+  "hold_phone_upright": "Hold Phone Upright",
+  "rotate_at_constant_speed" : "Rotate at constant speed",
+  "merging":"Merging",
+  "saved":"Saved",
+  "merge_failed":"Merge Failed"
 }

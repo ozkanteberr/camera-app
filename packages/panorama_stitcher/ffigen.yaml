@@ -1,0 +1,15 @@
+# Run with `dart run ffigen --config ffigen.yaml`.
+name: PanoramaStitcherBindings
+description: |
+  Bindings for `src/panorama_stitcher.h`.
+
+  Regenerate bindings with `dart run ffigen --config ffigen.yaml`.
+output: 'lib/panorama_stitcher_bindings_generated.dart'
+headers:
+  entry-points:
+    - 'src/panorama_stitcher.h'
+  include-directives:
+    - 'src/panorama_stitcher.h'
+comments:
+  style: any
+  length: full

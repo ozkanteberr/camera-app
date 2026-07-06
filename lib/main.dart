@@ -1,6 +1,7 @@
 ﻿import 'package:camera_app/core/storage/app_storage.dart';
 import 'package:camera_app/providers/camera_provider.dart';
 import 'package:camera_app/providers/ocr_provider.dart';
+import 'package:camera_app/providers/panorama_provider.dart';
 import 'package:camera_app/providers/pose_provider.dart';
 import 'package:camera_app/providers/smart_selfie_provider.dart';
 import 'package:camera_app/screens/home_screen.dart';
@@ -29,6 +30,7 @@ void main() async {
           ChangeNotifierProvider(create: (_) => PoseProvider()),
           ChangeNotifierProvider(create: (_) => OcrProvider()),
           ChangeNotifierProvider(create: (_) => SmartSelfieProvider()),
+          ChangeNotifierProvider(create: (_) => PanoramaProvider())
         ],
         child: const MyApp(),
       ),

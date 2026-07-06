@@ -43,3 +43,9 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Build outputs from nested Flutter/Android modules
+**/build/
+
+# Accidental duplicated OpenCV files copied by Windows
+packages/panorama_stitcher/src/opencv/**/*(1).*

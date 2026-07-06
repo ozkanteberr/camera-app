@@ -24,5 +24,13 @@
   "asagi_indir": "Kamerayı biraz aşağı indirin",
   "harika_bekle": "Harika, kıpırdamayın",
   "cekiliyor": "Çekiliyor",
-  "kaydedildi": "Selfie galeriye kaydedildi"
+  "kaydedildi": "Selfie galeriye kaydedildi",
+  "panorama_title":"Panorama fotoğraf",
+  "panorama_subtitle":"Panoramik fotoğraflar çekin",
+  "panorama_start": "Panorama hazır",
+  "hold_phone_upright": "Telefonu Dik Tut",
+  "rotate_at_constant_speed" : "Sabit hızla çevir",
+  "merging":"Birleştiriliyor",
+  "saved":"Kaydedildi",
+  "merge_failed":"Birleştirme başarısız"
 }

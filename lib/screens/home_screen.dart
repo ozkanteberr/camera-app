@@ -1,4 +1,5 @@
 ﻿import 'package:camera_app/screens/ocr_screen.dart';
+import 'package:camera_app/screens/panorama_screen.dart';
 import 'package:camera_app/screens/pose_screen.dart';
 import 'package:camera_app/screens/smart_selfie_screen.dart';
 import 'package:easy_localization/easy_localization.dart';
@@ -106,6 +107,21 @@ class HomeScreen extends StatelessWidget {
                     context,
                     MaterialPageRoute(
                         builder: (context) => const SmartSelfieScreen()),
+                  );
+                },
+              ),
+              _buildMenuCard(
+                context,
+                width: cardWidth,
+                title: "panorama_title".tr(),
+                subtitle: "panorama_subtitle".tr(),
+                icon: Icons.panorama_photosphere_rounded,
+                color: Colors.purpleAccent,
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) => const PanoramaScreen()),
                   );
                 },
               ),
