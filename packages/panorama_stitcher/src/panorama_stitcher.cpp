@@ -23,7 +23,8 @@ cv::Mat last_frame_signature;
 
 constexpr size_t kMaxSurfaceFrames = 18;
 constexpr double kSurfacePixelsPerMeter = 850.0;
-constexpr int kMaxSurfaceOutputSide = 3600;
+constexpr int kMaxSurfaceFrameSide = 900;
+constexpr int kMaxSurfaceOutputSide = 3200;
 
 struct SurfaceFrame {
   cv::Mat image;
@@ -104,13 +105,31 @@ int32_t add_bgr_frame(const cv::Mat &bgr_img, const char *log_label) {
 cv::Mat resize_for_surface(const cv::Mat &bgr_img) {
   cv::Mat output_img;
   const int max_side = bgr_img.cols > bgr_img.rows ? bgr_img.cols : bgr_img.rows;
-  if (max_side > 960) {
-    const double scale = 960.0 / max_side;
+  if (max_side > kMaxSurfaceFrameSide) {
+    const double scale = static_cast<double>(kMaxSurfaceFrameSide) / max_side;
     cv::resize(bgr_img, output_img, cv::Size(), scale, scale, cv::INTER_AREA);
   } else {
     output_img = bgr_img.clone();
   }
   return output_img;
+}
+
+cv::Rect mask_bounds(const cv::Mat &mask) {
+  std::vector<cv::Point> points;
+  cv::findNonZero(mask, points);
+  if (points.empty()) return cv::Rect();
+  return cv::boundingRect(points);
+}
+
+void crop_to_coverage(cv::Mat *image, cv::Mat *coverage) {
+  if (image == nullptr || coverage == nullptr || image->empty() || coverage->empty()) return;
+
+  const cv::Rect bounds = mask_bounds(*coverage);
+  if (bounds.width <= 0 || bounds.height <= 0) return;
+  if (bounds.width == image->cols && bounds.height == image->rows) return;
+
+  *image = (*image)(bounds).clone();
+  *coverage = (*coverage)(bounds).clone();
 }
 
 int32_t encode_jpeg_result(const cv::Mat &image, uint8_t **output_image_bytes, int32_t *out_width, int32_t *out_height) {
@@ -435,6 +454,7 @@ int32_t process_surface_scan(uint8_t **output_image_bytes, int32_t *out_width, i
     const int output_height = std::max(1, static_cast<int>(std::ceil(height_meters * scale)));
     cv::Mat canvas(output_height, output_width, CV_8UC3, cv::Scalar(0, 0, 0));
     cv::Mat coverage(output_height, output_width, CV_8UC1, cv::Scalar(0));
+    const int64 start_tick = cv::getTickCount();
 
     for (const SurfaceFrame &frame : frames_snapshot) {
       std::vector<cv::Point2f> src_points = {
@@ -449,7 +469,7 @@ int32_t process_surface_scan(uint8_t **output_image_bytes, int32_t *out_width, i
       for (const cv::Point2f &point : frame.plane_points) {
         dst_points.push_back(cv::Point2f(
             static_cast<float>((point.x - min_x) * scale),
-            static_cast<float>((max_y - point.y) * scale)));
+            static_cast<float>((point.y - min_y) * scale)));
       }
 
       cv::Mat homography = cv::getPerspectiveTransform(src_points, dst_points);
@@ -459,18 +479,47 @@ int32_t process_surface_scan(uint8_t **output_image_bytes, int32_t *out_width, i
       cv::Mat source_mask(frame.image.rows, frame.image.cols, CV_8UC1, cv::Scalar(255));
       cv::Mat warped_mask;
       cv::warpPerspective(source_mask, warped_mask, homography, canvas.size(), cv::INTER_NEAREST, cv::BORDER_CONSTANT);
-      warped.copyTo(canvas, warped_mask);
-      cv::bitwise_or(coverage, warped_mask, coverage);
+
+      const cv::Rect roi = mask_bounds(warped_mask);
+      if (roi.width <= 0 || roi.height <= 0) continue;
+
+      cv::Mat canvas_roi = canvas(roi);
+      cv::Mat coverage_roi = coverage(roi);
+      cv::Mat warped_roi = warped(roi);
+      cv::Mat mask_roi = warped_mask(roi);
+
+      cv::Mat inverted_coverage;
+      cv::bitwise_not(coverage_roi, inverted_coverage);
+
+      cv::Mat new_pixels_mask;
+      cv::bitwise_and(mask_roi, inverted_coverage, new_pixels_mask);
+      warped_roi.copyTo(canvas_roi, new_pixels_mask);
+
+      cv::Mat overlap_mask;
+      cv::bitwise_and(mask_roi, coverage_roi, overlap_mask);
+      if (cv::countNonZero(overlap_mask) > 0) {
+        cv::Mat blended_roi;
+        cv::addWeighted(canvas_roi, 0.58, warped_roi, 0.42, 0.0, blended_roi);
+        blended_roi.copyTo(canvas_roi, overlap_mask);
+      }
+
+      cv::bitwise_or(coverage_roi, mask_roi, coverage_roi);
     }
 
-    crop_black_edges(&canvas);
+    if (cv::countNonZero(coverage) <= 0) {
+      LOGI("Surface compositor produced no covered pixels.");
+      return -4;
+    }
+
+    crop_to_coverage(&canvas, &coverage);
     const int32_t encoded_size = encode_jpeg_result(canvas, output_image_bytes, out_width, out_height);
     if (encoded_size <= 0) {
       LOGI("Surface JPG encoding failed.");
       return -4;
     }
 
-    LOGI("Surface scan complete. Output: %d x %d", canvas.cols, canvas.rows);
+    const double elapsed_ms = (cv::getTickCount() - start_tick) * 1000.0 / cv::getTickFrequency();
+    LOGI("Surface scan complete. Output: %d x %d in %.1f ms", canvas.cols, canvas.rows, elapsed_ms);
     return encoded_size;
   } catch (const cv::Exception &e) {
     LOGI("OpenCV surface processing error: %s", e.what());

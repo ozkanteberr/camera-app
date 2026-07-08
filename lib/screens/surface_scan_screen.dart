@@ -267,27 +267,6 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
     } finally { for (final image in decodedImages) { image.dispose(); } }
   }
 
-  Future<Uint8List?> _composeSurfaceWithPanoramaEngine(List<_CapturedSurfaceFrame> frames) async {
-    if (frames.length < 2) return null;
-    try {
-      PanoramaStitcher.init();
-      PanoramaStitcher.clear();
-      await Future<void>.delayed(const Duration(milliseconds: 16));
-      var acceptedFrames = 0;
-      for (final frame in frames) {
-        final frameCount = PanoramaStitcher.addEncodedFrame(frame.croppedBytes);
-        if (frameCount > acceptedFrames) acceptedFrames = frameCount;
-        if (acceptedFrames.isEven) await Future<void>.delayed(Duration.zero);
-      }
-      if (acceptedFrames < 2) return null;
-      await Future<void>.delayed(const Duration(milliseconds: 16));
-      return PanoramaStitcher.process();
-    } catch (e) {
-      debugPrint('Surface panorama compose error: $e');
-      return null;
-    } finally { try { PanoramaStitcher.clear(); } catch (_) {} }
-  }
-
   Future<Uint8List?> _composeSurfaceWithOpenCv(List<_CapturedSurfaceFrame> frames) async {
     if (frames.isEmpty) return null;
     try {
@@ -939,7 +918,7 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
     setState(() => _isMerging = true);
     try {
       final frames = List<_CapturedSurfaceFrame>.unmodifiable(_capturedFrames);
-      final merged = await _composeSurfaceWithOpenCv(frames) ?? await _composeSurfaceWithPanoramaEngine(frames) ?? await _stitchFramesSideBySide(frames);
+      final merged = await _composeSurfaceWithOpenCv(frames) ?? await _stitchFramesSideBySide(frames);
       if (!mounted) return;
       if (merged == null || merged.isEmpty) { _showSnack('merge_failed'); return; }
       await _openReport(merged);
