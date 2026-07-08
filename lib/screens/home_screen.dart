@@ -1,7 +1,8 @@
-﻿import 'package:camera_app/screens/ocr_screen.dart';
+import 'package:camera_app/screens/ocr_screen.dart';
 import 'package:camera_app/screens/panorama_screen.dart';
 import 'package:camera_app/screens/pose_screen.dart';
 import 'package:camera_app/screens/smart_selfie_screen.dart';
+import 'package:camera_app/screens/surface_scan_screen.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil_plus/flutter_screenutil_plus.dart';
@@ -122,6 +123,21 @@ class HomeScreen extends StatelessWidget {
                     context,
                     MaterialPageRoute(
                         builder: (context) => const PanoramaScreen()),
+                  );
+                },
+              ),
+              _buildMenuCard(
+                context,
+                width: cardWidth,
+                title: "surface_scan_title".tr(),
+                subtitle: "surface_scan_subtitle".tr(),
+                icon: Icons.view_in_ar_rounded,
+                color: Colors.tealAccent,
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) => const SurfaceScanScreen()),
                   );
                 },
               ),

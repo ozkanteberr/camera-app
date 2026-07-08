@@ -47,6 +47,6 @@
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Yüz tespiti ve analizi için kameranıza erişmemiz gerekiyor.</string>
+	<string>Yüz tespiti, kamera özellikleri ve AR yüzey taraması için kameranıza erişmemiz gerekiyor.</string>
 </dict>
 </plist>
