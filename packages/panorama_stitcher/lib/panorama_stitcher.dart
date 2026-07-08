@@ -59,6 +59,41 @@ final ProcessPanoramaDart _processPanoramaC = _lib
     .lookup<NativeFunction<ProcessPanoramaC>>('process_panorama')
     .asFunction();
 
+typedef ClearSurfaceFramesC = Void Function();
+typedef ClearSurfaceFramesDart = void Function();
+final ClearSurfaceFramesDart _clearSurfaceFramesC = _lib
+    .lookup<NativeFunction<ClearSurfaceFramesC>>('clear_surface_frames')
+    .asFunction();
+
+typedef AddSurfaceFrameC = Int32 Function(
+  Pointer<Uint8> imageBytes,
+  Int32 length,
+  Pointer<Double> planePoints,
+  Int32 pointCount,
+);
+typedef AddSurfaceFrameDart = int Function(
+  Pointer<Uint8> imageBytes,
+  int length,
+  Pointer<Double> planePoints,
+  int pointCount,
+);
+final AddSurfaceFrameDart _addSurfaceFrameC = _lib
+    .lookup<NativeFunction<AddSurfaceFrameC>>('add_surface_frame')
+    .asFunction();
+
+typedef ProcessSurfaceScanC = Int32 Function(
+  Pointer<Pointer<Uint8>> outputImageBytes,
+  Pointer<Int32> outWidth,
+  Pointer<Int32> outHeight,
+);
+typedef ProcessSurfaceScanDart = int Function(
+  Pointer<Pointer<Uint8>> outputImageBytes,
+  Pointer<Int32> outWidth,
+  Pointer<Int32> outHeight,
+);
+final ProcessSurfaceScanDart _processSurfaceScanC = _lib
+    .lookup<NativeFunction<ProcessSurfaceScanC>>('process_surface_scan')
+    .asFunction();
 typedef FreePanoramaBufferC = Void Function(Pointer<Uint8> buffer);
 typedef FreePanoramaBufferDart = void Function(Pointer<Uint8> buffer);
 final FreePanoramaBufferDart _freePanoramaBufferC = _lib
@@ -94,6 +129,58 @@ class PanoramaStitcher {
     }
   }
 
+  static void clearSurface() => _clearSurfaceFramesC();
+
+  static int addSurfaceFrame(Uint8List bytes, List<double> planePoints) {
+    if (bytes.isEmpty || planePoints.length != 8) return -1;
+
+    final Pointer<Uint8> imagePointer = malloc<Uint8>(bytes.length);
+    final Pointer<Double> pointsPointer = malloc<Double>(planePoints.length);
+    try {
+      imagePointer.asTypedList(bytes.length).setAll(0, bytes);
+      pointsPointer.asTypedList(planePoints.length).setAll(0, planePoints);
+      return _addSurfaceFrameC(
+        imagePointer,
+        bytes.length,
+        pointsPointer,
+        4,
+      );
+    } finally {
+      malloc.free(imagePointer);
+      malloc.free(pointsPointer);
+    }
+  }
+
+  static Uint8List? processSurfaceScan() {
+    final Pointer<Pointer<Uint8>> outBytesPtr = calloc<Pointer<Uint8>>();
+    final Pointer<Int32> outWidthPtr = calloc<Int32>();
+    final Pointer<Int32> outHeightPtr = calloc<Int32>();
+
+    final int size = _processSurfaceScanC(outBytesPtr, outWidthPtr, outHeightPtr);
+    if (size <= 0) {
+      calloc.free(outBytesPtr);
+      calloc.free(outWidthPtr);
+      calloc.free(outHeightPtr);
+      return null;
+    }
+
+    final Pointer<Uint8> imgPointer = outBytesPtr.value;
+    if (imgPointer == nullptr) {
+      calloc.free(outBytesPtr);
+      calloc.free(outWidthPtr);
+      calloc.free(outHeightPtr);
+      return null;
+    }
+
+    try {
+      return Uint8List.fromList(imgPointer.asTypedList(size));
+    } finally {
+      _freePanoramaBufferC(imgPointer);
+      calloc.free(outBytesPtr);
+      calloc.free(outWidthPtr);
+      calloc.free(outHeightPtr);
+    }
+  }
   static Uint8List? process() {
     final Pointer<Pointer<Uint8>> outBytesPtr = calloc<Pointer<Uint8>>();
     final Pointer<Int32> outWidthPtr = calloc<Int32>();

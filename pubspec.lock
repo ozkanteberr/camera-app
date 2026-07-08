@@ -20,10 +20,9 @@ packages:
   ar_flutter_plugin_updated:
     dependency: "direct main"
     description:
-      name: ar_flutter_plugin_updated
-      sha256: "015fa1bfd2383cea7d195dc9f76a49c1ebe079b48fe442ff5219501d03213c53"
-      url: "https://pub.dev"
-    source: hosted
+      path: "packages/ar_flutter_plugin_updated"
+      relative: true
+    source: path
     version: "0.0.1"
   args:
     dependency: transitive
@@ -661,7 +660,7 @@ packages:
     source: hosted
     version: "1.9.1"
   path_provider:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: path_provider
       sha256: a7f4874f987173da295a61c181b8ee71dab59b332a486b391babf26a1b884825
@@ -1002,7 +1001,7 @@ packages:
     source: hosted
     version: "4.5.3"
   vector_math:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: vector_math
       sha256: d530bd74fea330e6e364cda7a85019c434070188383e1cd8d9777ee586914c5b

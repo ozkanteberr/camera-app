@@ -1,6 +1,8 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/stitching.hpp>
 #include <android/log.h>
+#include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -19,6 +21,16 @@ std::mutex frames_mutex;
 std::vector<cv::Mat> captured_frames;
 cv::Mat last_frame_signature;
 
+constexpr size_t kMaxSurfaceFrames = 18;
+constexpr double kSurfacePixelsPerMeter = 850.0;
+constexpr int kMaxSurfaceOutputSide = 3600;
+
+struct SurfaceFrame {
+  cv::Mat image;
+  std::vector<cv::Point2f> plane_points;
+};
+
+std::vector<SurfaceFrame> surface_frames;
 int32_t current_frame_count() {
   std::lock_guard<std::mutex> lock(frames_mutex);
   return static_cast<int32_t>(captured_frames.size());
@@ -89,6 +101,36 @@ int32_t add_bgr_frame(const cv::Mat &bgr_img, const char *log_label) {
   return static_cast<int32_t>(captured_frames.size());
 }
 
+cv::Mat resize_for_surface(const cv::Mat &bgr_img) {
+  cv::Mat output_img;
+  const int max_side = bgr_img.cols > bgr_img.rows ? bgr_img.cols : bgr_img.rows;
+  if (max_side > 960) {
+    const double scale = 960.0 / max_side;
+    cv::resize(bgr_img, output_img, cv::Size(), scale, scale, cv::INTER_AREA);
+  } else {
+    output_img = bgr_img.clone();
+  }
+  return output_img;
+}
+
+int32_t encode_jpeg_result(const cv::Mat &image, uint8_t **output_image_bytes, int32_t *out_width, int32_t *out_height) {
+  std::vector<uchar> buffer;
+  const std::vector<int> params = {cv::IMWRITE_JPEG_QUALITY, 88};
+  if (!cv::imencode(".jpg", image, buffer, params) || buffer.empty()) {
+    return 0;
+  }
+
+  uint8_t *native_buffer = static_cast<uint8_t *>(std::malloc(buffer.size()));
+  if (native_buffer == nullptr) {
+    return 0;
+  }
+
+  std::memcpy(native_buffer, buffer.data(), buffer.size());
+  *output_image_bytes = native_buffer;
+  *out_width = image.cols;
+  *out_height = image.rows;
+  return static_cast<int32_t>(buffer.size());
+}
 void crop_black_edges(cv::Mat *image) {
   if (image == nullptr || image->empty()) return;
 
@@ -282,6 +324,162 @@ int32_t process_panorama(uint8_t **output_image_bytes, int32_t *out_width, int32
   }
 }
 
+__attribute__((visibility("default"))) __attribute__((used))
+void clear_surface_frames() {
+  std::lock_guard<std::mutex> lock(frames_mutex);
+  surface_frames.clear();
+  surface_frames.reserve(kMaxSurfaceFrames);
+  LOGI("Surface frame memory cleared.");
+}
+
+__attribute__((visibility("default"))) __attribute__((used))
+int32_t add_surface_frame(uint8_t *image_bytes, int32_t length, double *plane_points, int32_t point_count) {
+  if (image_bytes == nullptr || length <= 0 || plane_points == nullptr || point_count != 4) {
+    LOGI("Invalid surface frame.");
+    return -1;
+  }
+
+  try {
+    std::vector<uchar> buffer(image_bytes, image_bytes + length);
+    cv::Mat decoded_img = cv::imdecode(buffer, cv::IMREAD_COLOR);
+    if (decoded_img.empty()) {
+      LOGI("Surface frame decode failed.");
+      return -2;
+    }
+
+    SurfaceFrame frame;
+    frame.image = resize_for_surface(decoded_img);
+    frame.plane_points.reserve(4);
+    for (int i = 0; i < 4; ++i) {
+      frame.plane_points.push_back(cv::Point2f(
+          static_cast<float>(plane_points[i * 2]),
+          static_cast<float>(plane_points[i * 2 + 1])));
+    }
+
+    std::lock_guard<std::mutex> lock(frames_mutex);
+    if (surface_frames.size() >= kMaxSurfaceFrames) {
+      return static_cast<int32_t>(surface_frames.size());
+    }
+    surface_frames.push_back(frame);
+    LOGI("Surface frame accepted. Total frames: %d", (int)surface_frames.size());
+    return static_cast<int32_t>(surface_frames.size());
+  } catch (const cv::Exception &e) {
+    LOGI("OpenCV surface add error: %s", e.what());
+    return -3;
+  } catch (...) {
+    LOGI("Unknown surface add error.");
+    return -4;
+  }
+}
+
+__attribute__((visibility("default"))) __attribute__((used))
+int32_t process_surface_scan(uint8_t **output_image_bytes, int32_t *out_width, int32_t *out_height) {
+  if (output_image_bytes == nullptr || out_width == nullptr || out_height == nullptr) {
+    return -1;
+  }
+
+  *output_image_bytes = nullptr;
+  *out_width = 0;
+  *out_height = 0;
+
+  std::vector<SurfaceFrame> frames_snapshot;
+  {
+    std::lock_guard<std::mutex> lock(frames_mutex);
+    if (surface_frames.empty()) {
+      LOGI("Not enough surface frames.");
+      return -2;
+    }
+
+    frames_snapshot.reserve(surface_frames.size());
+    for (const SurfaceFrame &frame : surface_frames) {
+      if (!frame.image.empty() && frame.plane_points.size() == 4) {
+        SurfaceFrame copy;
+        copy.image = frame.image.clone();
+        copy.plane_points = frame.plane_points;
+        frames_snapshot.push_back(copy);
+      }
+    }
+    surface_frames.clear();
+    surface_frames.reserve(kMaxSurfaceFrames);
+  }
+
+  if (frames_snapshot.empty()) {
+    return -3;
+  }
+
+  try {
+    float min_x = frames_snapshot[0].plane_points[0].x;
+    float max_x = min_x;
+    float min_y = frames_snapshot[0].plane_points[0].y;
+    float max_y = min_y;
+    for (const SurfaceFrame &frame : frames_snapshot) {
+      for (const cv::Point2f &point : frame.plane_points) {
+        min_x = std::min(min_x, point.x);
+        max_x = std::max(max_x, point.x);
+        min_y = std::min(min_y, point.y);
+        max_y = std::max(max_y, point.y);
+      }
+    }
+
+    const double width_meters = std::max(0.01f, max_x - min_x);
+    const double height_meters = std::max(0.01f, max_y - min_y);
+    double scale = kSurfacePixelsPerMeter;
+    const double raw_width = width_meters * scale;
+    const double raw_height = height_meters * scale;
+    const double max_side = std::max(raw_width, raw_height);
+    if (max_side > kMaxSurfaceOutputSide) {
+      scale *= static_cast<double>(kMaxSurfaceOutputSide) / max_side;
+    }
+
+    const int output_width = std::max(1, static_cast<int>(std::ceil(width_meters * scale)));
+    const int output_height = std::max(1, static_cast<int>(std::ceil(height_meters * scale)));
+    cv::Mat canvas(output_height, output_width, CV_8UC3, cv::Scalar(0, 0, 0));
+    cv::Mat coverage(output_height, output_width, CV_8UC1, cv::Scalar(0));
+
+    for (const SurfaceFrame &frame : frames_snapshot) {
+      std::vector<cv::Point2f> src_points = {
+        cv::Point2f(0.0f, 0.0f),
+        cv::Point2f(static_cast<float>(frame.image.cols - 1), 0.0f),
+        cv::Point2f(static_cast<float>(frame.image.cols - 1), static_cast<float>(frame.image.rows - 1)),
+        cv::Point2f(0.0f, static_cast<float>(frame.image.rows - 1))
+      };
+
+      std::vector<cv::Point2f> dst_points;
+      dst_points.reserve(4);
+      for (const cv::Point2f &point : frame.plane_points) {
+        dst_points.push_back(cv::Point2f(
+            static_cast<float>((point.x - min_x) * scale),
+            static_cast<float>((max_y - point.y) * scale)));
+      }
+
+      cv::Mat homography = cv::getPerspectiveTransform(src_points, dst_points);
+      cv::Mat warped;
+      cv::warpPerspective(frame.image, warped, homography, canvas.size(), cv::INTER_LINEAR, cv::BORDER_CONSTANT);
+
+      cv::Mat source_mask(frame.image.rows, frame.image.cols, CV_8UC1, cv::Scalar(255));
+      cv::Mat warped_mask;
+      cv::warpPerspective(source_mask, warped_mask, homography, canvas.size(), cv::INTER_NEAREST, cv::BORDER_CONSTANT);
+      warped.copyTo(canvas, warped_mask);
+      cv::bitwise_or(coverage, warped_mask, coverage);
+    }
+
+    crop_black_edges(&canvas);
+    const int32_t encoded_size = encode_jpeg_result(canvas, output_image_bytes, out_width, out_height);
+    if (encoded_size <= 0) {
+      LOGI("Surface JPG encoding failed.");
+      return -4;
+    }
+
+    LOGI("Surface scan complete. Output: %d x %d", canvas.cols, canvas.rows);
+    return encoded_size;
+  } catch (const cv::Exception &e) {
+    LOGI("OpenCV surface processing error: %s", e.what());
+    return -5;
+  } catch (...) {
+    LOGI("Unknown surface processing error.");
+    return -6;
+  }
+}
 __attribute__((visibility("default"))) __attribute__((used))
 void free_panorama_buffer(uint8_t *buffer) {
   if (buffer != nullptr) {
