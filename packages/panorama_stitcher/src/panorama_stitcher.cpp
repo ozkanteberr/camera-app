@@ -122,15 +122,66 @@ cv::Rect mask_bounds(const cv::Mat &mask) {
   return cv::boundingRect(points);
 }
 
+cv::Rect largest_covered_rectangle(const cv::Mat &mask) {
+  if (mask.empty() || mask.type() != CV_8UC1) return cv::Rect();
+
+  std::vector<int> heights(mask.cols, 0);
+  cv::Rect best;
+  int64_t best_area = 0;
+
+  for (int y = 0; y < mask.rows; ++y) {
+    const uint8_t *row = mask.ptr<uint8_t>(y);
+    for (int x = 0; x < mask.cols; ++x) {
+      heights[x] = row[x] != 0 ? heights[x] + 1 : 0;
+    }
+
+    std::vector<std::pair<int, int>> stack;
+    stack.reserve(mask.cols);
+    for (int x = 0; x <= mask.cols; ++x) {
+      const int height = x < mask.cols ? heights[x] : 0;
+      int start = x;
+      while (!stack.empty() && stack.back().second > height) {
+        const int bar_start = stack.back().first;
+        const int bar_height = stack.back().second;
+        stack.pop_back();
+        const int64_t area = static_cast<int64_t>(bar_height) * (x - bar_start);
+        if (area > best_area) {
+          best_area = area;
+          best = cv::Rect(bar_start, y - bar_height + 1, x - bar_start, bar_height);
+        }
+        start = bar_start;
+      }
+      if (height > 0 && (stack.empty() || stack.back().second < height)) {
+        stack.emplace_back(start, height);
+      }
+    }
+  }
+  return best;
+}
+
 void crop_to_coverage(cv::Mat *image, cv::Mat *coverage) {
   if (image == nullptr || coverage == nullptr || image->empty() || coverage->empty()) return;
 
   const cv::Rect bounds = mask_bounds(*coverage);
   if (bounds.width <= 0 || bounds.height <= 0) return;
-  if (bounds.width == image->cols && bounds.height == image->rows) return;
+  cv::Mat safe_coverage;
+  cv::threshold((*coverage)(bounds), safe_coverage, 250, 255, cv::THRESH_BINARY);
+  cv::erode(
+      safe_coverage,
+      safe_coverage,
+      cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3)));
 
-  *image = (*image)(bounds).clone();
-  *coverage = (*coverage)(bounds).clone();
+  const cv::Rect local_solid = largest_covered_rectangle(safe_coverage);
+  const bool solid_crop_is_usable = local_solid.width >= 32 &&
+                                    local_solid.height >= 32 &&
+                                    local_solid.area() >= bounds.area() * 0.22;
+  const cv::Rect crop = solid_crop_is_usable
+      ? cv::Rect(bounds.x + local_solid.x, bounds.y + local_solid.y, local_solid.width, local_solid.height)
+      : bounds;
+
+  LOGI("Surface coverage crop: bounds=%dx%d solid=%dx%d", bounds.width, bounds.height, crop.width, crop.height);
+  *image = (*image)(crop).clone();
+  *coverage = (*coverage)(crop).clone();
 }
 
 double clamp_double(double value, double min_value, double max_value) {
@@ -547,7 +598,7 @@ int32_t process_surface_scan(uint8_t **output_image_bytes, int32_t *out_width, i
 
       cv::Mat homography = cv::getPerspectiveTransform(src_points, dst_points);
       cv::Mat warped;
-      cv::warpPerspective(frame.image, warped, homography, canvas.size(), cv::INTER_LINEAR, cv::BORDER_CONSTANT);
+      cv::warpPerspective(frame.image, warped, homography, canvas.size(), cv::INTER_LINEAR, cv::BORDER_REPLICATE);
 
       cv::Mat source_mask(frame.image.rows, frame.image.cols, CV_8UC1, cv::Scalar(255));
       cv::Mat warped_mask;
