@@ -18,7 +18,11 @@ import 'package:flutter_screenutil_plus/flutter_screenutil_plus.dart';
 import 'package:hive/hive.dart';
 import 'package:panorama_stitcher/panorama_stitcher.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:provider/provider.dart';
 import 'package:vector_math/vector_math_64.dart' as vmath;
+
+import '../providers/camera_provider.dart';
+import 'gallery_screen.dart';
 
 String _encodedImageExtension(Uint8List bytes) {
   final isJpeg = bytes.length > 2 && bytes[0] == 0xFF && bytes[1] == 0xD8;
@@ -343,7 +347,7 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
   }
   Widget _buildFramesRibbon() => Positioned(
         bottom: 112.h,
-        left: 14.w,
+        left: 70.w,
         right: 14.w,
         child: Container(
           height: 72.h,
@@ -383,7 +387,7 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
     if (!_showSettings) return const SizedBox.shrink();
     return Positioned(
       left: 14.w,
-      bottom: 96.h,
+      bottom: 154.h,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(14.r),
         child: BackdropFilter(
@@ -415,17 +419,30 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
         right: 0,
         bottom: 28.h,
         child: SizedBox(
-          height: 74.h,
+          height: 122.h,
           child: Stack(
-            alignment: Alignment.center,
+            alignment: Alignment.bottomCenter,
             children: [
               Positioned(
                 left: 16.w,
-                child: Row(
+                bottom: 0,
+                child: Column(
                   mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildSettingsButton(),
-                    if (_capturedFrames.isNotEmpty) ...[SizedBox(width: 14.w), _buildCircleButtonMini(icon: Icons.refresh_rounded, onPressed: _resetScan, tooltip: 'surface_scan_reset'.tr())],
+                    _buildGalleryButton(),
+                    SizedBox(height: 8.h),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        _buildSettingsButton(),
+                        if (_capturedFrames.isNotEmpty) ...[
+                          SizedBox(width: 14.w),
+                          _buildCircleButtonMini(icon: Icons.refresh_rounded, onPressed: _resetScan, tooltip: 'surface_scan_reset'.tr()),
+                        ],
+                      ],
+                    ),
                   ],
                 ),
               ),
@@ -433,6 +450,7 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
               if (_capturedFrames.isNotEmpty)
                 Positioned(
                   right: 16.w,
+                  bottom: 0,
                   child: TextButton(
                     onPressed: _isMerging ? null : _mergeAndOpenReport,
                     style: TextButton.styleFrom(backgroundColor: Colors.greenAccent, foregroundColor: Colors.black, padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 10.h), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18.r))),
@@ -442,6 +460,12 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
             ],
           ),
         ),
+      );
+
+  Widget _buildGalleryButton() => _buildCircleButtonMini(
+        icon: Icons.photo_library_outlined,
+        onPressed: _openGallery,
+        tooltip: 'gallery_title'.tr(),
       );
 
   Widget _buildPrimaryActionButton() {
@@ -486,6 +510,26 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
           ],
         ),
       );
+
+  Future<void> _openGallery() async {
+    if (_isCapturing || _isCropping || _isMerging) return;
+    final cameraProvider = context.read<CameraProvider>();
+    cameraProvider.loadSavedPhotos();
+    _stopSurfacePreviewTracking();
+    _arSessionManager?.disableCamera();
+    try {
+      if (!mounted) return;
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const GalleryScreen()),
+      );
+    } finally {
+      if (mounted) {
+        _arSessionManager?.enableCamera();
+        if (_stage == _SurfaceScanStage.locked) _startSurfacePreviewTracking();
+      }
+    }
+  }
 
   Widget _buildCaptureCounter() => ClipRRect(
         borderRadius: BorderRadius.circular(18.r),
