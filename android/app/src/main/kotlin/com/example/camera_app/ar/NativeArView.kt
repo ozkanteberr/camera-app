@@ -19,6 +19,7 @@ import android.view.View
 import androidx.core.content.ContextCompat
 import com.google.ar.core.ArCoreApk
 import com.google.ar.core.Config
+import com.google.ar.core.DepthPoint
 import com.google.ar.core.Frame
 import com.google.ar.core.HitResult
 import com.google.ar.core.Plane
@@ -50,6 +51,8 @@ class NativeArView(
     private val sessionLock = Any()
     private val backgroundRenderer = ArBackgroundRenderer()
     private val planeRenderer = ArPlaneRenderer()
+    private val depthSurfaceRenderer = ArDepthSurfaceRenderer()
+    private val depthSurfaceTracker = DepthSurfaceTracker()
 
     private var session: Session? = null
     private var latestFrame: Frame? = null
@@ -68,9 +71,14 @@ class NativeArView(
     @Volatile private var showPlanes = true
     @Volatile private var planeCallbacksEnabled = true
     @Volatile private var configuredPlaneMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
+    @Volatile private var depthSupported = false
     @Volatile private var surfaceWidth = 0
     @Volatile private var surfaceHeight = 0
     private var lastReportedPlaneCount = -1
+    private var latestDepthSurface: DepthSurface? = null
+    private var lastDepthScanAtMs = 0L
+    private var lastDepthSurfaceAtMs = 0L
+    private var depthDetectionStreak = 0
     private var userRequestedInstall = true
 
     init {
@@ -112,6 +120,8 @@ class NativeArView(
                 runCatching { if (sessionResumed) session?.pause() }
                 sessionResumed = false
                 latestFrame = null
+                latestDepthSurface = null
+                depthSurfaceTracker.reset()
                 session?.close()
                 session = null
             }
@@ -124,6 +134,7 @@ class NativeArView(
         GLES20.glEnable(GLES20.GL_DEPTH_TEST)
         backgroundRenderer.createOnGlThread()
         planeRenderer.createOnGlThread()
+        depthSurfaceRenderer.createOnGlThread()
         synchronized(sessionLock) { cameraTextureBound = false }
     }
 
@@ -158,8 +169,23 @@ class NativeArView(
                 }
                 val trackedPlanes = activeSession.getAllTrackables(Plane::class.java)
                     .filter { it.trackingState == TrackingState.TRACKING && it.subsumedBy == null }
-                if (showPlanes) planeRenderer.draw(frame.camera, trackedPlanes)
-                reportPlaneCount(trackedPlanes.size)
+                updateDepthSurface(frame)
+                if (showPlanes) {
+                    planeRenderer.draw(frame.camera, trackedPlanes)
+                    currentDepthSurface()?.let { depthSurface ->
+                        if (!hasMatchingArCorePlane(depthSurface, trackedPlanes)) {
+                            depthSurfaceRenderer.draw(frame.camera, depthSurface)
+                        }
+                    }
+                }
+                val detectedSurfaceCount = if (trackedPlanes.isNotEmpty()) {
+                    trackedPlanes.size
+                } else if (depthDetectionStreak >= REQUIRED_DEPTH_DETECTION_STREAK) {
+                    1
+                } else {
+                    0
+                }
+                reportPlaneCount(detectedSurfaceCount)
             } catch (error: Exception) {
                 postError("AR frame update failed: ${error.message ?: error.javaClass.simpleName}")
             }
@@ -201,6 +227,7 @@ class NativeArView(
                 planeCallbacksEnabled = enabled
                 sessionHandler.post {
                     synchronized(sessionLock) {
+                        depthSurfaceTracker.setLocked(!enabled)
                         session?.let { activeSession ->
                             val config = activeSession.config
                             config.planeFindingMode = if (enabled) configuredPlaneMode else Config.PlaneFindingMode.DISABLED
@@ -346,7 +373,10 @@ class NativeArView(
         config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
         config.focusMode = Config.FocusMode.AUTO
         config.planeFindingMode = if (planeCallbacksEnabled) configuredPlaneMode else Config.PlaneFindingMode.DISABLED
+        depthSupported = activeSession.isDepthModeSupported(Config.DepthMode.AUTOMATIC)
+        config.depthMode = if (depthSupported) Config.DepthMode.AUTOMATIC else Config.DepthMode.DISABLED
         activeSession.configure(config)
+        Log.i(TAG, "Depth API supported: $depthSupported")
     }
 
     private fun planeModeFor(index: Int): Config.PlaneFindingMode = when (index) {
@@ -401,6 +431,16 @@ class NativeArView(
         val frame = latestFrame ?: return null
         val points = call.argument<List<Map<String, Any>>>("points") ?: return null
         if (points.isEmpty()) return null
+        hitTestStandardPlaneQuadLocked(frame, points)?.let { return it }
+        val depthSurface = currentDepthSurface() ?: return null
+        if (points.size != 4 || depthSurface.corners.size != 4) return null
+        return ArrayList(depthSurface.corners.map(::serializePose))
+    }
+
+    private fun hitTestStandardPlaneQuadLocked(
+        frame: Frame,
+        points: List<Map<String, Any>>,
+    ): ArrayList<DoubleArray>? {
         val output = ArrayList<DoubleArray>(points.size)
         var selectedPlane: Plane? = null
         for (point in points) {
@@ -413,7 +453,10 @@ class NativeArView(
         return output
     }
 
-    private fun hitTestPlaneViewportLocked(call: MethodCall): HashMap<String, Any>? {
+    private fun hitTestPlaneViewportLocked(call: MethodCall): HashMap<String, Any>? =
+        hitTestStandardPlaneViewportLocked(call) ?: currentDepthSurface()?.let(::serializeDepthSurface)
+
+    private fun hitTestStandardPlaneViewportLocked(call: MethodCall): HashMap<String, Any>? {
         val frame = latestFrame ?: return null
         val columns = (call.argument<Int>("columns") ?: 9).coerceIn(3, 15)
         val rows = (call.argument<Int>("rows") ?: 13).coerceIn(3, 19)
@@ -474,6 +517,57 @@ class NativeArView(
         return null
     }
 
+    private fun serializeDepthSurface(surface: DepthSurface): HashMap<String, Any> = hashMapOf(
+        "rect" to arrayListOf(
+            surface.normalizedRect[0].toDouble(),
+            surface.normalizedRect[1].toDouble(),
+            surface.normalizedRect[2].toDouble(),
+            surface.normalizedRect[3].toDouble(),
+        ),
+        "hits" to ArrayList(surface.corners.map(::serializePose)),
+    )
+
+    private fun updateDepthSurface(frame: Frame) {
+        if (!depthSupported || frame.timestamp == 0L) return
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastDepthScanAtMs < DEPTH_SCAN_INTERVAL_MS) return
+        lastDepthScanAtMs = now
+        val detected = depthSurfaceTracker.detect(frame, surfaceWidth, surfaceHeight)
+        if (detected != null) {
+            latestDepthSurface = detected
+            lastDepthSurfaceAtMs = now
+            val previousStreak = depthDetectionStreak
+            depthDetectionStreak = (depthDetectionStreak + 1).coerceAtMost(REQUIRED_DEPTH_DETECTION_STREAK)
+            if (previousStreak < REQUIRED_DEPTH_DETECTION_STREAK &&
+                depthDetectionStreak == REQUIRED_DEPTH_DETECTION_STREAK
+            ) {
+                Log.i(DEPTH_TAG, "Stable low-texture surface acquired")
+            }
+        } else if (now - lastDepthSurfaceAtMs > DEPTH_SURFACE_TIMEOUT_MS) {
+            if (latestDepthSurface != null) Log.i(DEPTH_TAG, "Low-texture surface lost")
+            latestDepthSurface = null
+            depthDetectionStreak = 0
+        }
+    }
+
+    private fun currentDepthSurface(): DepthSurface? {
+        val surface = latestDepthSurface ?: return null
+        return if (SystemClock.elapsedRealtime() - lastDepthSurfaceAtMs <= DEPTH_SURFACE_TIMEOUT_MS) surface else null
+    }
+
+    private fun hasMatchingArCorePlane(depthSurface: DepthSurface, planes: Collection<Plane>): Boolean {
+        return planes.any { plane ->
+            val center = FloatArray(3)
+            val normal = FloatArray(3)
+            plane.centerPose.getTranslation(center, 0)
+            plane.centerPose.getTransformedAxis(1, 1f, normal, 0)
+            val planeCenter = Vec3(center[0], center[1], center[2])
+            val planeNormal = Vec3(normal[0], normal[1], normal[2]).normalized()
+            kotlin.math.abs(planeNormal.dot(depthSurface.plane.normal)) >= MATCHING_PLANE_NORMAL_DOT &&
+                kotlin.math.abs((depthSurface.plane.point - planeCenter).dot(planeNormal)) <= MATCHING_PLANE_DISTANCE_METERS
+        }
+    }
+
     private fun takeSnapshot(result: MethodChannel.Result) {
         if (surfaceView.width <= 0 || surfaceView.height <= 0) {
             result.error("snapshot_unavailable", "AR view has no drawable size.", null)
@@ -506,7 +600,8 @@ class NativeArView(
             frame.hitTest(event.x, event.y)
                 .filter { hit ->
                     val trackable = hit.trackable
-                    (trackable is Plane && trackable.isPoseInPolygon(hit.hitPose)) || trackable is Point
+                    (trackable is Plane && trackable.isPoseInPolygon(hit.hitPose)) ||
+                        trackable is Point || trackable is DepthPoint
                 }
                 .map { serializeHit(it) }
         }
@@ -520,6 +615,7 @@ class NativeArView(
         val type = when (hit.trackable) {
             is Plane -> 1
             is Point -> 2
+            is DepthPoint -> 2
             else -> 0
         }
         return hashMapOf(
@@ -554,5 +650,11 @@ class NativeArView(
 
     private companion object {
         const val TAG = "NativeArStartup"
+        const val DEPTH_TAG = "NativeArDepth"
+        const val DEPTH_SCAN_INTERVAL_MS = 450L
+        const val DEPTH_SURFACE_TIMEOUT_MS = 1600L
+        const val REQUIRED_DEPTH_DETECTION_STREAK = 2
+        const val MATCHING_PLANE_NORMAL_DOT = 0.92f
+        const val MATCHING_PLANE_DISTANCE_METERS = 0.08f
     }
 }
