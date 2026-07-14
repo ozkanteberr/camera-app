@@ -24,6 +24,7 @@ cv::Mat last_frame_signature;
 constexpr size_t kMaxSurfaceFrames = 18;
 constexpr double kSurfacePixelsPerMeter = 850.0;
 constexpr int kMaxSurfaceFrameSide = 900;
+constexpr int kMaxSurfaceCropSide = 1100;
 constexpr int kMaxSurfaceOutputSide = 3200;
 
 struct SurfaceFrame {
@@ -130,6 +131,10 @@ void crop_to_coverage(cv::Mat *image, cv::Mat *coverage) {
 
   *image = (*image)(bounds).clone();
   *coverage = (*coverage)(bounds).clone();
+}
+
+double clamp_double(double value, double min_value, double max_value) {
+  return std::max(min_value, std::min(max_value, value));
 }
 
 int32_t encode_jpeg_result(const cv::Mat &image, uint8_t **output_image_bytes, int32_t *out_width, int32_t *out_height) {
@@ -343,6 +348,74 @@ int32_t process_panorama(uint8_t **output_image_bytes, int32_t *out_width, int32
   }
 }
 
+__attribute__((visibility("default"))) __attribute__((used))
+int32_t crop_encoded_image(
+    uint8_t *image_bytes,
+    int32_t length,
+    double left,
+    double top,
+    double right,
+    double bottom,
+    int32_t screen_width,
+    int32_t screen_height,
+    uint8_t **output_image_bytes,
+    int32_t *out_width,
+    int32_t *out_height) {
+  if (image_bytes == nullptr || length <= 0 || output_image_bytes == nullptr || out_width == nullptr || out_height == nullptr) {
+    return -1;
+  }
+
+  *output_image_bytes = nullptr;
+  *out_width = 0;
+  *out_height = 0;
+
+  try {
+    std::vector<uchar> buffer(image_bytes, image_bytes + length);
+    cv::Mat decoded_img = cv::imdecode(buffer, cv::IMREAD_COLOR);
+    if (decoded_img.empty()) {
+      LOGI("Crop image decode failed.");
+      return -2;
+    }
+
+    if (screen_width > 0 && screen_height > 0 && decoded_img.cols > decoded_img.rows && screen_height > screen_width) {
+      cv::rotate(decoded_img, decoded_img, cv::ROTATE_90_CLOCKWISE);
+    }
+
+    const double crop_left = clamp_double(left, 0.0, 1.0);
+    const double crop_top = clamp_double(top, 0.0, 1.0);
+    const double crop_right = clamp_double(right, crop_left + 0.001, 1.0);
+    const double crop_bottom = clamp_double(bottom, crop_top + 0.001, 1.0);
+
+    const int src_left = std::max(0, std::min(decoded_img.cols - 1, static_cast<int>(std::floor(crop_left * decoded_img.cols))));
+    const int src_top = std::max(0, std::min(decoded_img.rows - 1, static_cast<int>(std::floor(crop_top * decoded_img.rows))));
+    const int src_right = std::max(src_left + 1, std::min(decoded_img.cols, static_cast<int>(std::ceil(crop_right * decoded_img.cols))));
+    const int src_bottom = std::max(src_top + 1, std::min(decoded_img.rows, static_cast<int>(std::ceil(crop_bottom * decoded_img.rows))));
+    const cv::Rect crop_rect(src_left, src_top, src_right - src_left, src_bottom - src_top);
+
+    cv::Mat cropped = decoded_img(crop_rect);
+    cv::Mat output_img;
+    const int max_side = cropped.cols > cropped.rows ? cropped.cols : cropped.rows;
+    if (max_side > kMaxSurfaceCropSide) {
+      const double scale = static_cast<double>(kMaxSurfaceCropSide) / max_side;
+      cv::resize(cropped, output_img, cv::Size(), scale, scale, cv::INTER_AREA);
+    } else {
+      output_img = cropped.clone();
+    }
+
+    const int32_t encoded_size = encode_jpeg_result(output_img, output_image_bytes, out_width, out_height);
+    if (encoded_size <= 0) {
+      LOGI("Crop JPG encoding failed.");
+      return -3;
+    }
+    return encoded_size;
+  } catch (const cv::Exception &e) {
+    LOGI("OpenCV crop error: %s", e.what());
+    return -4;
+  } catch (...) {
+    LOGI("Unknown crop error.");
+    return -5;
+  }
+}
 __attribute__((visibility("default"))) __attribute__((used))
 void clear_surface_frames() {
   std::lock_guard<std::mutex> lock(frames_mutex);

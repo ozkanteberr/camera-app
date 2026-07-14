@@ -94,6 +94,36 @@ typedef ProcessSurfaceScanDart = int Function(
 final ProcessSurfaceScanDart _processSurfaceScanC = _lib
     .lookup<NativeFunction<ProcessSurfaceScanC>>('process_surface_scan')
     .asFunction();
+
+typedef CropEncodedImageC = Int32 Function(
+  Pointer<Uint8> imageBytes,
+  Int32 length,
+  Double left,
+  Double top,
+  Double right,
+  Double bottom,
+  Int32 screenWidth,
+  Int32 screenHeight,
+  Pointer<Pointer<Uint8>> outputImageBytes,
+  Pointer<Int32> outWidth,
+  Pointer<Int32> outHeight,
+);
+typedef CropEncodedImageDart = int Function(
+  Pointer<Uint8> imageBytes,
+  int length,
+  double left,
+  double top,
+  double right,
+  double bottom,
+  int screenWidth,
+  int screenHeight,
+  Pointer<Pointer<Uint8>> outputImageBytes,
+  Pointer<Int32> outWidth,
+  Pointer<Int32> outHeight,
+);
+final CropEncodedImageDart _cropEncodedImageC = _lib
+    .lookup<NativeFunction<CropEncodedImageC>>('crop_encoded_image')
+    .asFunction();
 typedef FreePanoramaBufferC = Void Function(Pointer<Uint8> buffer);
 typedef FreePanoramaBufferDart = void Function(Pointer<Uint8> buffer);
 final FreePanoramaBufferDart _freePanoramaBufferC = _lib
@@ -148,6 +178,47 @@ class PanoramaStitcher {
     } finally {
       malloc.free(imagePointer);
       malloc.free(pointsPointer);
+    }
+  }
+
+  static Uint8List? cropEncodedImage(
+    Uint8List bytes, {
+    required double left,
+    required double top,
+    required double right,
+    required double bottom,
+    required int screenWidth,
+    required int screenHeight,
+  }) {
+    if (bytes.isEmpty || right <= left || bottom <= top) return null;
+
+    final Pointer<Uint8> imagePointer = malloc<Uint8>(bytes.length);
+    final Pointer<Pointer<Uint8>> outBytesPtr = calloc<Pointer<Uint8>>();
+    final Pointer<Int32> outWidthPtr = calloc<Int32>();
+    final Pointer<Int32> outHeightPtr = calloc<Int32>();
+    try {
+      imagePointer.asTypedList(bytes.length).setAll(0, bytes);
+      final int size = _cropEncodedImageC(
+        imagePointer,
+        bytes.length,
+        left,
+        top,
+        right,
+        bottom,
+        screenWidth,
+        screenHeight,
+        outBytesPtr,
+        outWidthPtr,
+        outHeightPtr,
+      );
+      if (size <= 0 || outBytesPtr.value == nullptr) return null;
+      return Uint8List.fromList(outBytesPtr.value.asTypedList(size));
+    } finally {
+      if (outBytesPtr.value != nullptr) _freePanoramaBufferC(outBytesPtr.value);
+      malloc.free(imagePointer);
+      calloc.free(outBytesPtr);
+      calloc.free(outWidthPtr);
+      calloc.free(outHeightPtr);
     }
   }
 

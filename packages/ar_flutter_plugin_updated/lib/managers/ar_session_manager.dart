@@ -13,11 +13,13 @@ import 'package:vector_math/vector_math_64.dart';
 typedef ARHitResultHandler = void Function(List<ARHitTestResult> hits);
 typedef ARPlaneResultHandler = void Function(int planeCount);
 typedef ErrorHandler = void Function(String error);
+typedef ARSessionReadyHandler = void Function();
 
 /// Manages the session configuration, parameters and events of an [ARView]
 class ARSessionManager {
   /// Platform channel used for communication from and to [ARSessionManager]
   late MethodChannel _channel;
+  bool _disposed = false;
 
   /// Debugging status flag. If true, all platform calls are printed. Defaults to false.
   final bool debug;
@@ -36,6 +38,9 @@ class ARSessionManager {
 
   /// Callback that is triggered once error is triggered
   ErrorHandler? onError;
+
+  /// Called after Android ARCore delivers the first camera frame.
+  ARSessionReadyHandler? onSessionReady;
 
   ARSessionManager(int id, this.buildContext, this.planeDetectionConfig,
       {this.debug = false}) {
@@ -206,6 +211,7 @@ class ARSessionManager {
   }
 
   Future<void> _platformCallHandler(MethodCall call) {
+    if (_disposed) return Future.value();
     if (debug) {
       print('_platformCallHandler call ${call.method} ${call.arguments}');
     }
@@ -242,6 +248,9 @@ class ARSessionManager {
             final planeCountResult = call.arguments as int;
             onPlaneDetected(planeCountResult);
           }
+          break;
+        case 'onSessionReady':
+          onSessionReady?.call();
           break;
         case 'dispose':
           _channel.invokeMethod<void>("dispose");
@@ -286,10 +295,16 @@ class ARSessionManager {
   /// Dispose the AR view on the platforms to pause the scenes and disconnect the platform handlers.
   /// You should call this before removing the AR view to prevent out of memory erros
   dispose() async {
+    if (_disposed) return;
+    _disposed = true;
+    onError = null;
+    onSessionReady = null;
     try {
       await _channel.invokeMethod<void>("dispose");
     } catch (e) {
       print(e);
+    } finally {
+      _channel.setMethodCallHandler(null);
     }
   }
 

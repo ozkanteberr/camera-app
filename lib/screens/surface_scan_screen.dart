@@ -25,6 +25,39 @@ String _encodedImageExtension(Uint8List bytes) {
   return isJpeg ? 'jpg' : 'png';
 }
 
+Uint8List? _cropSurfaceSnapshotInBackground(Map<String, Object> args) {
+  return PanoramaStitcher.cropEncodedImage(
+    args['bytes'] as Uint8List,
+    left: args['left'] as double,
+    top: args['top'] as double,
+    right: args['right'] as double,
+    bottom: args['bottom'] as double,
+    screenWidth: args['screenWidth'] as int,
+    screenHeight: args['screenHeight'] as int,
+  );
+}
+
+Uint8List? _composeSurfaceScanInBackground(List<Map<String, Object>> frames) {
+  try {
+    PanoramaStitcher.init();
+    PanoramaStitcher.clearSurface();
+    var acceptedFrames = 0;
+    for (final frame in frames) {
+      final frameCount = PanoramaStitcher.addSurfaceFrame(
+        frame['bytes'] as Uint8List,
+        (frame['points'] as List).cast<double>(),
+      );
+      if (frameCount > acceptedFrames) acceptedFrames = frameCount;
+    }
+    if (acceptedFrames <= 0) return null;
+    return PanoramaStitcher.processSurfaceScan();
+  } catch (_) {
+    return null;
+  } finally {
+    try { PanoramaStitcher.clearSurface(); } catch (_) {}
+  }
+}
+
 class SurfaceScanScreen extends StatefulWidget {
   const SurfaceScanScreen({super.key});
 
@@ -96,7 +129,7 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
   Widget build(BuildContext context) {
     if (!_supportsAr) return _buildUnsupportedScreen();
     return WillPopScope(
-      onWillPop: () async { _arSessionManager?.dispose(); return true; },
+      onWillPop: () async { await _arSessionManager?.dispose(); return true; },
       child: Scaffold(
         backgroundColor: Colors.black,
         body: Stack(
@@ -164,16 +197,6 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
     } finally { image.dispose(); }
   }
 
-  Rect _captureSourceRect(Size screenSize, Rect normalizedRect) {
-    final clamped = _clampNormalizedRect(normalizedRect);
-    return Rect.fromLTRB(
-      clamped.left * screenSize.width,
-      clamped.top * screenSize.height,
-      clamped.right * screenSize.width,
-      clamped.bottom * screenSize.height,
-    );
-  }
-
   Rect _clampNormalizedRect(Rect rect) => Rect.fromLTRB(
         rect.left.clamp(0.0, 1.0).toDouble(),
         rect.top.clamp(0.0, 1.0).toDouble(),
@@ -187,48 +210,6 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
         Offset(rect.right, rect.bottom),
         Offset(rect.left, rect.bottom),
       ];
-
-  Future<Uint8List> _cropImage(Uint8List imageBytes, Rect screenCropRect, Size screenSize) async {
-    final codec = await ui.instantiateImageCodec(imageBytes);
-    final frameInfo = await codec.getNextFrame();
-    var image = frameInfo.image;
-    if (image.width > image.height && screenSize.height > screenSize.width) {
-      final recorder = ui.PictureRecorder();
-      final canvas = ui.Canvas(recorder);
-      canvas.translate(image.height.toDouble(), 0);
-      canvas.rotate(math.pi / 2);
-      canvas.drawImage(image, Offset.zero, ui.Paint());
-      final rotatedImage = await recorder.endRecording().toImage(image.height, image.width);
-      image.dispose();
-      image = rotatedImage;
-    }
-    try {
-      final scaleX = image.width / screenSize.width;
-      final scaleY = image.height / screenSize.height;
-      final srcLeft = (screenCropRect.left * scaleX).clamp(0.0, image.width - 1.0).toDouble();
-      final srcTop = (screenCropRect.top * scaleY).clamp(0.0, image.height - 1.0).toDouble();
-      final srcWidth = (screenCropRect.width * scaleX).clamp(1.0, image.width - srcLeft).toDouble();
-      final srcHeight = (screenCropRect.height * scaleY).clamp(1.0, image.height - srcTop).toDouble();
-      const maxCropSide = 1400.0;
-      final outputScale = math.min(1.0, maxCropSide / math.max(srcWidth, srcHeight));
-      final outputWidth = math.max(1, (srcWidth * outputScale).round());
-      final outputHeight = math.max(1, (srcHeight * outputScale).round());
-      final recorder = ui.PictureRecorder();
-      final canvas = ui.Canvas(recorder);
-      canvas.drawImageRect(
-        image,
-        Rect.fromLTWH(srcLeft, srcTop, srcWidth, srcHeight),
-        Rect.fromLTWH(0, 0, outputWidth.toDouble(), outputHeight.toDouble()),
-        ui.Paint()..filterQuality = ui.FilterQuality.medium,
-      );
-      final croppedImage = await recorder.endRecording().toImage(outputWidth, outputHeight);
-      try {
-        final byteData = await croppedImage.toByteData(format: ui.ImageByteFormat.png);
-        if (byteData == null) throw StateError('Cropped image could not be encoded.');
-        return byteData.buffer.asUint8List();
-      } finally { croppedImage.dispose(); }
-    } finally { image.dispose(); }
-  }
 
   Future<Uint8List?> _stitchFramesSideBySide(List<_CapturedSurfaceFrame> frames) async {
     if (frames.isEmpty) return null;
@@ -269,23 +250,13 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
 
   Future<Uint8List?> _composeSurfaceWithOpenCv(List<_CapturedSurfaceFrame> frames) async {
     if (frames.isEmpty) return null;
-    try {
-      PanoramaStitcher.init();
-      PanoramaStitcher.clearSurface();
-      await Future<void>.delayed(const Duration(milliseconds: 16));
-      var acceptedFrames = 0;
-      for (final frame in frames) {
-        final frameCount = PanoramaStitcher.addSurfaceFrame(frame.croppedBytes, frame.planePoints);
-        if (frameCount > acceptedFrames) acceptedFrames = frameCount;
-        if (acceptedFrames.isEven) await Future<void>.delayed(Duration.zero);
-      }
-      if (acceptedFrames <= 0) return null;
-      await Future<void>.delayed(const Duration(milliseconds: 16));
-      return PanoramaStitcher.processSurfaceScan();
-    } catch (e) {
-      debugPrint('Surface OpenCV compose error: $e');
-      return null;
-    } finally { try { PanoramaStitcher.clearSurface(); } catch (_) {} }
+    final payload = frames
+        .map((frame) => <String, Object>{
+              'bytes': frame.croppedBytes,
+              'points': List<double>.unmodifiable(frame.planePoints),
+            })
+        .toList(growable: false);
+    return compute(_composeSurfaceScanInBackground, payload);
   }
 
   Widget _buildLoadingOverlay() => Container(
@@ -561,10 +532,14 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
     _arSessionManager = arSessionManager;
     arSessionManager.onError = _handleArError;
     arSessionManager.onPlaneDetected = _handlePlaneDetected;
-    try { PanoramaStitcher.init(); PanoramaStitcher.clearSurface(); } catch (e) { debugPrint('Surface OpenCV init error: $e'); }
+    arSessionManager.onSessionReady = _handleArSessionReady;
     _updateSessionSettings();
     arObjectManager.onInitialize();
-    if (!mounted) return;
+    if (defaultTargetPlatform == TargetPlatform.iOS) _handleArSessionReady();
+  }
+
+  void _handleArSessionReady() {
+    if (!mounted || _isInitialized) return;
     setState(() { _isInitialized = true; _stage = _SurfaceScanStage.scanning; });
   }
 
@@ -833,23 +808,37 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
     }
 
     final shouldRestorePlanes = _showPlanes;
+    var planesHidden = false;
     try {
       if (shouldRestorePlanes) {
         manager.showPlanes(false);
+        planesHidden = true;
         await Future<void>.delayed(const Duration(milliseconds: 70));
       }
 
       final screenSize = MediaQuery.of(context).size;
       final imageProvider = await manager.snapshot();
+      if (planesHidden && mounted && _stage == _SurfaceScanStage.locked) {
+        manager.showPlanes(true);
+        planesHidden = false;
+      }
       if (!mounted) return false;
       setState(() => _isCropping = true);
 
       final originalBytes = await _imageProviderToPngBytes(imageProvider);
-      final croppedBytes = await _cropImage(
-        originalBytes,
-        _captureSourceRect(screenSize, geometry.normalizedRect),
-        screenSize,
-      );
+      final rect = geometry.normalizedRect;
+      final croppedBytes = await compute(_cropSurfaceSnapshotInBackground, <String, Object>{
+        'bytes': originalBytes,
+        'left': rect.left,
+        'top': rect.top,
+        'right': rect.right,
+        'bottom': rect.bottom,
+        'screenWidth': screenSize.width.round(),
+        'screenHeight': screenSize.height.round(),
+      });
+      if (croppedBytes == null || croppedBytes.isEmpty) {
+        throw StateError('Surface crop failed.');
+      }
       final croppedProvider = MemoryImage(croppedBytes);
       if (!mounted) return false;
 
@@ -869,7 +858,7 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
       if (mounted) _showSnack('surface_scan_capture_failed');
       return false;
     } finally {
-      if (shouldRestorePlanes && mounted && _stage == _SurfaceScanStage.locked) {
+      if (planesHidden && mounted && _stage == _SurfaceScanStage.locked) {
         manager.showPlanes(true);
       }
       if (mounted) setState(() { _isCapturing = false; _isCropping = false; _showFlash = false; });

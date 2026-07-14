@@ -50,6 +50,12 @@ android {
     }
 }
 
+dependencies {
+    // AR is implemented by the app's Kotlin PlatformView. Keep this current so
+    // every bundled ARCore JNI library supports Android's flexible page sizes.
+    implementation "com.google.ar:core:1.54.0"
+}
+
 flutter {
     source = "../.."
 }
