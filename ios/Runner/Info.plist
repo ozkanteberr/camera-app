@@ -48,5 +48,9 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Yüz tespiti, kamera özellikleri ve AR yüzey taraması için kameranıza erişmemiz gerekiyor.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Sesinizi metne dönüştürmek için mikrofon erişimi gerekiyor.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Konuşmanızı sohbet metnine dönüştürmek için ses tanıma erişimi gerekiyor.</string>
 </dict>
 </plist>

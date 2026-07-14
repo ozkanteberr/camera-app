@@ -3,6 +3,7 @@ import 'package:camera_app/screens/panorama_screen.dart';
 import 'package:camera_app/screens/pose_screen.dart';
 import 'package:camera_app/screens/smart_selfie_screen.dart';
 import 'package:camera_app/screens/surface_scan_screen.dart';
+import 'package:camera_app/screens/voice_chat_screen.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil_plus/flutter_screenutil_plus.dart';
@@ -138,6 +139,22 @@ class HomeScreen extends StatelessWidget {
                     context,
                     MaterialPageRoute(
                         builder: (context) => const SurfaceScanScreen()),
+                  );
+                },
+              ),
+              _buildMenuCard(
+                context,
+                width: cardWidth,
+                title: "voice_chat_title".tr(),
+                subtitle: "voice_chat_subtitle".tr(),
+                icon: Icons.record_voice_over_rounded,
+                color: Colors.cyanAccent,
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const VoiceChatScreen(),
+                    ),
                   );
                 },
               ),
