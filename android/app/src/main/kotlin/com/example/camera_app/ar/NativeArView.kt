@@ -32,10 +32,9 @@ class NativeArView(
     viewId: Int,
 ) : PlatformView, GLSurfaceView.Renderer, Application.ActivityLifecycleCallbacks {
     private val surfaceView = GLSurfaceView(context)
-    private val sessionChannel = MethodChannel(messenger, "arsession_$viewId")
-    private val objectChannel = MethodChannel(messenger, "arobjects_$viewId")
-    private val anchorChannel = MethodChannel(messenger, "aranchors_$viewId")
     private val mainHandler = Handler(Looper.getMainLooper())
+    @Volatile private var disposed = false
+    private val channels = ArPlatformChannels(messenger, viewId, mainHandler) { disposed }
     private val sessionThread = HandlerThread("NativeArSession-$viewId").apply { start() }
     private val sessionHandler = Handler(sessionThread.looper)
     private val sessionLock = Any()
@@ -45,7 +44,6 @@ class NativeArView(
     private var session: Session? = null
     @Volatile private var sessionResumed = false
     private var cameraTextureBound = false
-    @Volatile private var disposed = false
     @Volatile private var activityResumed = true
     @Volatile private var initializationRequested = false
     @Volatile private var availabilityCheckInProgress = false
@@ -54,12 +52,10 @@ class NativeArView(
     @Volatile private var sessionStartInProgress = false
     @Volatile private var sessionReadyReported = false
     @Volatile private var startupStartedAtMs = 0L
-    @Volatile private var lastReportedError: String? = null
     @Volatile private var showPlanes = true
     @Volatile private var planeCallbacksEnabled = true
     @Volatile private var configuredPlaneMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
     @Volatile private var depthSupported = false
-    private var lastReportedPlaneCount = -1
     private var userRequestedInstall = true
 
     init {
@@ -68,19 +64,7 @@ class NativeArView(
         surfaceView.setRenderer(this)
         surfaceView.renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
         surfaceView.setOnTouchListener { _, event -> handleTap(event) }
-        sessionChannel.setMethodCallHandler(::handleSessionMethod)
-        objectChannel.setMethodCallHandler { call, result ->
-            when (call.method) {
-                "addNode", "addNodeToPlaneAnchor" -> result.success(false)
-                else -> result.success(null)
-            }
-        }
-        anchorChannel.setMethodCallHandler { call, result ->
-            when (call.method) {
-                "addAnchor", "uploadAnchor", "downloadAnchor", "initGoogleCloudAnchorMode" -> result.success(false)
-                else -> result.success(null)
-            }
-        }
+        channels.setSessionMethodCallHandler(::handleSessionMethod)
         activity.application.registerActivityLifecycleCallbacks(this)
         surfaceView.onResume()
     }
@@ -92,9 +76,7 @@ class NativeArView(
         disposed = true
         activityResumed = false
         activity.application.unregisterActivityLifecycleCallbacks(this)
-        sessionChannel.setMethodCallHandler(null)
-        objectChannel.setMethodCallHandler(null)
-        anchorChannel.setMethodCallHandler(null)
+        channels.clearMethodCallHandlers()
         surfaceView.onPause()
         sessionHandler.post {
             synchronized(sessionLock) {
@@ -137,13 +119,11 @@ class NativeArView(
                 if (!sessionReadyReported && frameUpdate.timestamp != 0L) {
                     sessionReadyReported = true
                     Log.i(TAG, "First camera frame in ${SystemClock.elapsedRealtime() - startupStartedAtMs} ms")
-                    mainHandler.post {
-                        if (!disposed) sessionChannel.invokeMethod("onSessionReady", null)
-                    }
+                    channels.reportSessionReady()
                 }
-                reportPlaneCount(frameUpdate.detectedSurfaceCount)
+                channels.reportPlaneCount(frameUpdate.detectedSurfaceCount, planeCallbacksEnabled)
             } catch (error: Exception) {
-                postError("AR frame update failed: ${error.message ?: error.javaClass.simpleName}")
+                channels.reportError("AR frame update failed: ${error.message ?: error.javaClass.simpleName}")
             }
         }
     }
@@ -154,7 +134,7 @@ class NativeArView(
                 initializationRequested = true
                 if (startupStartedAtMs == 0L) startupStartedAtMs = SystemClock.elapsedRealtime()
                 showPlanes = call.argument<Boolean>("showPlanes") ?: true
-                configuredPlaneMode = planeModeFor(call.argument<Int>("planeDetectionConfig") ?: 3)
+                configuredPlaneMode = planeFindingModeFor(call.argument<Int>("planeDetectionConfig") ?: 3)
                 planeCallbacksEnabled = configuredPlaneMode != Config.PlaneFindingMode.DISABLED
                 sessionHandler.post {
                     synchronized(sessionLock) { configureSessionLocked() }
@@ -215,7 +195,7 @@ class NativeArView(
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.CAMERA) !=
             android.content.pm.PackageManager.PERMISSION_GRANTED
         ) {
-            postError("Camera permission is required for AR.")
+            channels.reportError("Camera permission is required for AR.")
             return
         }
         if (session != null || arCoreReady) {
@@ -239,7 +219,7 @@ class NativeArView(
                 }
                 ArCoreApk.Availability.SUPPORTED_NOT_INSTALLED,
                 ArCoreApk.Availability.SUPPORTED_APK_TOO_OLD -> requestArCoreInstall()
-                else -> postError("ARCore is not supported on this device: $availability")
+                else -> channels.reportError("ARCore is not supported on this device: $availability")
             }
         }
     }
@@ -256,7 +236,7 @@ class NativeArView(
                 }
                 Log.i(TAG, "Installed ARCore verified in ${SystemClock.elapsedRealtime() - installStartedAt} ms")
             } catch (error: Exception) {
-                postError("ARCore installation check failed: ${error.message ?: error.javaClass.simpleName}")
+                channels.reportError("ARCore installation check failed: ${error.message ?: error.javaClass.simpleName}")
             } finally {
                 installCheckInProgress = false
             }
@@ -276,7 +256,7 @@ class NativeArView(
             }
             Log.i(TAG, "Install request handled in ${SystemClock.elapsedRealtime() - installStartedAt} ms")
         } catch (error: Exception) {
-            postError("ARCore installation check failed: ${error.message ?: error.javaClass.simpleName}")
+            channels.reportError("ARCore installation check failed: ${error.message ?: error.javaClass.simpleName}")
         }
     }
 
@@ -304,7 +284,7 @@ class NativeArView(
                     }
                 }
             } catch (error: Exception) {
-                postError("ARCore could not start: ${error.message ?: error.javaClass.simpleName}")
+                channels.reportError("ARCore could not start: ${error.message ?: error.javaClass.simpleName}")
             } finally {
                 sessionStartInProgress = false
             }
@@ -333,30 +313,9 @@ class NativeArView(
         Log.i(TAG, "Depth API supported: $depthSupported")
     }
 
-    private fun planeModeFor(index: Int): Config.PlaneFindingMode = when (index) {
-        0 -> Config.PlaneFindingMode.DISABLED
-        1 -> Config.PlaneFindingMode.HORIZONTAL
-        2 -> Config.PlaneFindingMode.VERTICAL
-        else -> Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
-    }
-
     @Suppress("DEPRECATION")
     private fun currentRotation(): Int =
         activity.windowManager.defaultDisplay?.rotation ?: Surface.ROTATION_0
-
-    private fun reportPlaneCount(count: Int) {
-        if (!planeCallbacksEnabled || count == lastReportedPlaneCount) return
-        lastReportedPlaneCount = count
-        mainHandler.post { if (!disposed) sessionChannel.invokeMethod("onPlaneDetected", count) }
-    }
-
-    private fun postError(message: String) {
-        if (disposed || lastReportedError == message) return
-        lastReportedError = message
-        mainHandler.post {
-            if (!disposed) sessionChannel.invokeMethod("onError", listOf(message))
-        }
-    }
 
     private fun hitTestPlaneQuadLocked(call: MethodCall): ArrayList<DoubleArray>? {
         val points = call.argument<List<Map<String, Any>>>("points") ?: return null
@@ -383,9 +342,7 @@ class NativeArView(
         val hits = synchronized(sessionLock) {
             frameSurfacePipeline.hitTestTap(event.x, event.y)
         }
-        if (hits.isNotEmpty()) {
-            sessionChannel.invokeMethod("onPlaneOrPointTap", hits)
-        }
+        channels.reportTap(hits)
         return true
     }
 
