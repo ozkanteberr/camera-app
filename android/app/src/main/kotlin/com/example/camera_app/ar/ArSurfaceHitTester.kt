@@ -12,9 +12,10 @@ internal class ArSurfaceHitTester {
         surfaceWidth: Int,
         surfaceHeight: Int,
         points: List<Map<String, Any>>,
+        requiredPlane: Plane? = null,
     ): ArrayList<DoubleArray>? {
         val output = ArrayList<DoubleArray>(points.size)
-        var selectedPlane: Plane? = null
+        var selectedPlane = requiredPlane
         for (point in points) {
             val x = (point["x"] as? Number)?.toFloat() ?: return null
             val y = (point["y"] as? Number)?.toFloat() ?: return null
@@ -40,6 +41,7 @@ internal class ArSurfaceHitTester {
         rows: Int,
         marginX: Float,
         marginY: Float,
+        requiredPlane: Plane? = null,
     ): HashMap<String, Any>? {
         val leftLimit = marginX
         val rightLimit = 1f - marginX
@@ -54,7 +56,14 @@ internal class ArSurfaceHitTester {
             val y = topLimit + stepY * row
             for (column in 0 until columns) {
                 val x = leftLimit + stepX * column
-                val hit = hitTestPlaneAt(frame, surfaceWidth, surfaceHeight, x, y) ?: continue
+                val hit = hitTestPlaneAt(
+                    frame,
+                    surfaceWidth,
+                    surfaceHeight,
+                    x,
+                    y,
+                    requiredPlane,
+                ) ?: continue
                 val plane = hit.trackable as Plane
                 hitsByPlane.getOrPut(plane) { mutableListOf() }.add(Pair(x, y))
             }

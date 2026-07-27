@@ -26,6 +26,7 @@ internal class ArFrameSurfacePipeline {
     private var lastDepthScanAtMs = 0L
     private var lastDepthSurfaceAtMs = 0L
     private var depthDetectionStreak = 0
+    private var selectedPlane: Plane? = null
     @Volatile private var surfaceWidth = 0
     @Volatile private var surfaceHeight = 0
 
@@ -67,6 +68,7 @@ internal class ArFrameSurfacePipeline {
             surfaceHeight,
             SystemClock.elapsedRealtime(),
         )
+        selectedPlane = activePlane
         if (showPlanes) {
             activePlane?.let { planeRenderer.draw(frame.camera, listOf(it)) }
             if (activePlane == null && !activePlaneSelector.holdsSelection) {
@@ -94,7 +96,16 @@ internal class ArFrameSurfacePipeline {
     fun hitTestPlaneQuad(points: List<Map<String, Any>>): ArrayList<DoubleArray>? {
         val frame = latestFrame ?: return null
         if (points.isEmpty()) return null
-        surfaceHitTester.hitTestPlaneQuad(frame, surfaceWidth, surfaceHeight, points)?.let { return it }
+        val targetPlane = selectedPlane
+        if (targetPlane == null && activePlaneSelector.holdsSelection) return null
+        val planeHits = surfaceHitTester.hitTestPlaneQuad(
+            frame,
+            surfaceWidth,
+            surfaceHeight,
+            points,
+            targetPlane,
+        )
+        if (targetPlane != null || planeHits != null) return planeHits
         val depthSurface = currentDepthSurface() ?: return null
         if (points.size != 4 || depthSurface.corners.size != 4) return null
         return ArrayList(depthSurface.corners.map(::serializePose))
@@ -107,7 +118,9 @@ internal class ArFrameSurfacePipeline {
         marginY: Float,
     ): HashMap<String, Any>? {
         val frame = latestFrame ?: return null
-        return surfaceHitTester.hitTestPlaneViewport(
+        val targetPlane = selectedPlane
+        if (targetPlane == null && activePlaneSelector.holdsSelection) return null
+        val planeResult = surfaceHitTester.hitTestPlaneViewport(
             frame,
             surfaceWidth,
             surfaceHeight,
@@ -115,7 +128,10 @@ internal class ArFrameSurfacePipeline {
             rows,
             marginX,
             marginY,
-        ) ?: currentDepthSurface()?.let(::serializeDepthSurface)
+            targetPlane,
+        )
+        if (targetPlane != null || planeResult != null) return planeResult
+        return currentDepthSurface()?.let(::serializeDepthSurface)
     }
 
     fun hitTestTap(x: Float, y: Float): List<HashMap<String, Any>> {
@@ -135,6 +151,7 @@ internal class ArFrameSurfacePipeline {
 
     fun restartPlaneSelection() {
         activePlaneSelector.reset()
+        selectedPlane = null
     }
 
     fun reset() {
@@ -143,6 +160,7 @@ internal class ArFrameSurfacePipeline {
         lastDepthScanAtMs = 0L
         lastDepthSurfaceAtMs = 0L
         depthDetectionStreak = 0
+        selectedPlane = null
         depthSurfaceTracker.reset()
         activePlaneSelector.reset()
     }
