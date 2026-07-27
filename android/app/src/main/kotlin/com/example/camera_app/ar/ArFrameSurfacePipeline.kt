@@ -19,6 +19,7 @@ internal class ArFrameSurfacePipeline {
     private val depthSurfaceRenderer = ArDepthSurfaceRenderer()
     private val depthSurfaceTracker = DepthSurfaceTracker()
     private val surfaceHitTester = ArSurfaceHitTester()
+    private val activePlaneSelector = ArActivePlaneSelector()
 
     private var latestFrame: com.google.ar.core.Frame? = null
     private var latestDepthSurface: DepthSurface? = null
@@ -59,17 +60,28 @@ internal class ArFrameSurfacePipeline {
         val trackedPlanes = session.getAllTrackables(Plane::class.java)
             .filter { it.trackingState == TrackingState.TRACKING && it.subsumedBy == null }
         updateDepthSurface(frame, depthSupported)
+        val activePlane = activePlaneSelector.select(
+            frame,
+            trackedPlanes,
+            surfaceWidth,
+            surfaceHeight,
+            SystemClock.elapsedRealtime(),
+        )
         if (showPlanes) {
-            planeRenderer.draw(frame.camera, trackedPlanes)
-            currentDepthSurface()?.let { depthSurface ->
-                if (!hasMatchingArCorePlane(depthSurface, trackedPlanes)) {
-                    depthSurfaceRenderer.draw(frame.camera, depthSurface)
+            activePlane?.let { planeRenderer.draw(frame.camera, listOf(it)) }
+            if (activePlane == null && !activePlaneSelector.holdsSelection) {
+                currentDepthSurface()?.let { depthSurface ->
+                    if (!hasMatchingArCorePlane(depthSurface, trackedPlanes)) {
+                        depthSurfaceRenderer.draw(frame.camera, depthSurface)
+                    }
                 }
             }
         }
-        val detectedSurfaceCount = if (trackedPlanes.isNotEmpty()) {
-            trackedPlanes.size
-        } else if (depthDetectionStreak >= REQUIRED_DEPTH_DETECTION_STREAK) {
+        val detectedSurfaceCount = if (activePlane != null) {
+            1
+        } else if (!activePlaneSelector.holdsSelection &&
+            depthDetectionStreak >= REQUIRED_DEPTH_DETECTION_STREAK
+        ) {
             1
         } else {
             0
@@ -121,6 +133,10 @@ internal class ArFrameSurfacePipeline {
         depthSurfaceTracker.setLocked(locked)
     }
 
+    fun restartPlaneSelection() {
+        activePlaneSelector.reset()
+    }
+
     fun reset() {
         latestFrame = null
         latestDepthSurface = null
@@ -128,6 +144,7 @@ internal class ArFrameSurfacePipeline {
         lastDepthSurfaceAtMs = 0L
         depthDetectionStreak = 0
         depthSurfaceTracker.reset()
+        activePlaneSelector.reset()
     }
 
     private fun serializePose(pose: com.google.ar.core.Pose): DoubleArray {

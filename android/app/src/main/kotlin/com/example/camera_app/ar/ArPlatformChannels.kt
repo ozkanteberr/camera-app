@@ -2,7 +2,26 @@ package com.example.camera_app.ar
 
 import android.os.Handler
 import io.flutter.plugin.common.BinaryMessenger
+import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+
+internal data class ArViewportRequest(
+    val columns: Int,
+    val rows: Int,
+    val marginX: Float,
+    val marginY: Float,
+)
+
+internal fun MethodCall.planePoints(): List<Map<String, Any>>? = argument("points")
+
+internal fun MethodCall.viewportRequest() = ArViewportRequest(
+    columns = (argument<Int>("columns") ?: 9).coerceIn(3, 15),
+    rows = (argument<Int>("rows") ?: 13).coerceIn(3, 19),
+    marginX = ((argument<Any>("horizontalMargin") as? Number)?.toFloat() ?: 0.04f)
+        .coerceIn(0f, 0.25f),
+    marginY = ((argument<Any>("verticalMargin") as? Number)?.toFloat() ?: 0.06f)
+        .coerceIn(0f, 0.25f),
+)
 
 internal class ArPlatformChannels(
     messenger: BinaryMessenger,
@@ -54,6 +73,10 @@ internal class ArPlatformChannels(
         mainHandler.post {
             if (!isDisposed()) sessionChannel.invokeMethod("onPlaneDetected", count)
         }
+    }
+
+    fun resetPlaneCount() {
+        lastReportedPlaneCount = -1
     }
 
     fun reportError(message: String) {
