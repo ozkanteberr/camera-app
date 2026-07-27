@@ -53,6 +53,7 @@ class NativeArView(
     private val planeRenderer = ArPlaneRenderer()
     private val depthSurfaceRenderer = ArDepthSurfaceRenderer()
     private val depthSurfaceTracker = DepthSurfaceTracker()
+    private val surfaceHitTester = ArSurfaceHitTester()
 
     private var session: Session? = null
     private var latestFrame: Frame? = null
@@ -410,53 +411,17 @@ class NativeArView(
         return DoubleArray(matrix.size) { matrix[it].toDouble() }
     }
 
-    private fun hitTestPlaneAtLocked(
-        frame: Frame,
-        normalizedX: Float,
-        normalizedY: Float,
-        requiredPlane: Plane? = null,
-    ): HitResult? {
-        if (surfaceWidth <= 0 || surfaceHeight <= 0) return null
-        val x = normalizedX.coerceIn(0f, 1f) * surfaceWidth
-        val y = normalizedY.coerceIn(0f, 1f) * surfaceHeight
-        return frame.hitTest(x, y).firstOrNull { hit ->
-            val plane = hit.trackable as? Plane ?: return@firstOrNull false
-            plane.trackingState == TrackingState.TRACKING &&
-                plane.isPoseInPolygon(hit.hitPose) &&
-                (requiredPlane == null || requiredPlane == plane)
-        }
-    }
-
     private fun hitTestPlaneQuadLocked(call: MethodCall): ArrayList<DoubleArray>? {
         val frame = latestFrame ?: return null
         val points = call.argument<List<Map<String, Any>>>("points") ?: return null
         if (points.isEmpty()) return null
-        hitTestStandardPlaneQuadLocked(frame, points)?.let { return it }
+        surfaceHitTester.hitTestPlaneQuad(frame, surfaceWidth, surfaceHeight, points)?.let { return it }
         val depthSurface = currentDepthSurface() ?: return null
         if (points.size != 4 || depthSurface.corners.size != 4) return null
         return ArrayList(depthSurface.corners.map(::serializePose))
     }
 
-    private fun hitTestStandardPlaneQuadLocked(
-        frame: Frame,
-        points: List<Map<String, Any>>,
-    ): ArrayList<DoubleArray>? {
-        val output = ArrayList<DoubleArray>(points.size)
-        var selectedPlane: Plane? = null
-        for (point in points) {
-            val x = (point["x"] as? Number)?.toFloat() ?: return null
-            val y = (point["y"] as? Number)?.toFloat() ?: return null
-            val hit = hitTestPlaneAtLocked(frame, x, y, selectedPlane) ?: return null
-            selectedPlane = hit.trackable as Plane
-            output.add(serializePose(hit.hitPose))
-        }
-        return output
-    }
-
-    private fun hitTestPlaneViewportLocked(call: MethodCall): HashMap<String, Any>? =
-        hitTestStandardPlaneViewportLocked(call) ?: currentDepthSurface()?.let(::serializeDepthSurface)
-
-    private fun hitTestStandardPlaneViewportLocked(call: MethodCall): HashMap<String, Any>? {
+    private fun hitTestPlaneViewportLocked(call: MethodCall): HashMap<String, Any>? {
         val frame = latestFrame ?: return null
         val columns = (call.argument<Int>("columns") ?: 9).coerceIn(3, 15)
         val rows = (call.argument<Int>("rows") ?: 13).coerceIn(3, 19)
@@ -464,57 +429,15 @@ class NativeArView(
             .coerceIn(0f, 0.25f)
         val marginY = ((call.argument<Any>("verticalMargin") as? Number)?.toFloat() ?: 0.06f)
             .coerceIn(0f, 0.25f)
-        val leftLimit = marginX
-        val rightLimit = 1f - marginX
-        val topLimit = marginY
-        val bottomLimit = 1f - marginY
-        if (rightLimit <= leftLimit || bottomLimit <= topLimit) return null
-        val stepX = (rightLimit - leftLimit) / (columns - 1)
-        val stepY = (bottomLimit - topLimit) / (rows - 1)
-        val hitsByPlane = HashMap<Plane, MutableList<Pair<Float, Float>>>()
-
-        for (row in 0 until rows) {
-            val y = topLimit + stepY * row
-            for (column in 0 until columns) {
-                val x = leftLimit + stepX * column
-                val hit = hitTestPlaneAtLocked(frame, x, y) ?: continue
-                val plane = hit.trackable as Plane
-                hitsByPlane.getOrPut(plane) { mutableListOf() }.add(Pair(x, y))
-            }
-        }
-        val selected = hitsByPlane.maxByOrNull { it.value.size } ?: return null
-        if (selected.value.size < 4) return null
-        val plane = selected.key
-        val minX = selected.value.minOf { it.first }
-        val maxX = selected.value.maxOf { it.first }
-        val minY = selected.value.minOf { it.second }
-        val maxY = selected.value.maxOf { it.second }
-        val baseLeft = (minX - stepX * 0.5f).coerceIn(leftLimit, rightLimit)
-        val baseRight = (maxX + stepX * 0.5f).coerceIn(leftLimit, rightLimit)
-        val baseTop = (minY - stepY * 0.5f).coerceIn(topLimit, bottomLimit)
-        val baseBottom = (maxY + stepY * 0.5f).coerceIn(topLimit, bottomLimit)
-        if (baseRight - baseLeft < 0.14f || baseBottom - baseTop < 0.14f) return null
-
-        for (shrink in floatArrayOf(0f, 0.015f, 0.03f, 0.05f, 0.075f, 0.10f)) {
-            val left = (baseLeft + shrink).coerceIn(leftLimit, rightLimit)
-            val right = (baseRight - shrink).coerceIn(leftLimit, rightLimit)
-            val top = (baseTop + shrink).coerceIn(topLimit, bottomLimit)
-            val bottom = (baseBottom - shrink).coerceIn(topLimit, bottomLimit)
-            if (right - left < 0.12f || bottom - top < 0.12f) continue
-            val corners = listOf(Pair(left, top), Pair(right, top), Pair(right, bottom), Pair(left, bottom))
-            val hits = ArrayList<DoubleArray>(4)
-            for (corner in corners) {
-                val hit = hitTestPlaneAtLocked(frame, corner.first, corner.second, plane) ?: break
-                hits.add(serializePose(hit.hitPose))
-            }
-            if (hits.size == 4) {
-                return hashMapOf(
-                    "rect" to arrayListOf(left.toDouble(), top.toDouble(), right.toDouble(), bottom.toDouble()),
-                    "hits" to hits,
-                )
-            }
-        }
-        return null
+        return surfaceHitTester.hitTestPlaneViewport(
+            frame,
+            surfaceWidth,
+            surfaceHeight,
+            columns,
+            rows,
+            marginX,
+            marginY,
+        ) ?: currentDepthSurface()?.let(::serializeDepthSurface)
     }
 
     private fun serializeDepthSurface(surface: DepthSurface): HashMap<String, Any> = hashMapOf(
