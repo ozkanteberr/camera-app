@@ -10,6 +10,18 @@ import kotlin.math.max
 import kotlin.math.min
 
 internal class WallSurfaceGeometry {
+    fun fromViewRect(camera: Camera, rect: FloatArray, plane: DepthPlane): DepthSurface? {
+        if (rect.size != 4 || rect[2] <= rect[0] || rect[3] <= rect[1]) return null
+        val corners = listOf(
+            intersectViewRay(camera, rect[0], rect[1], plane),
+            intersectViewRay(camera, rect[2], rect[1], plane),
+            intersectViewRay(camera, rect[2], rect[3], plane),
+            intersectViewRay(camera, rect[0], rect[3], plane),
+        )
+        if (corners.any { it == null }) return null
+        return DepthSurface(plane, rect.copyOf(), corners.filterNotNull())
+    }
+
     fun fromPlane(plane: Plane): DepthSurface? {
         if (plane.type != Plane.Type.VERTICAL || plane.trackingState != TrackingState.TRACKING) return null
         val polygon = plane.polygon.duplicate()

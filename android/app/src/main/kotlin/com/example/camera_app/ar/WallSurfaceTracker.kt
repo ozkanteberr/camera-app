@@ -2,8 +2,6 @@ package com.example.camera_app.ar
 
 import com.google.ar.core.Anchor
 import com.google.ar.core.Camera
-import com.google.ar.core.Frame
-import com.google.ar.core.Plane
 import com.google.ar.core.Pose
 import com.google.ar.core.Session
 import com.google.ar.core.TrackingState
@@ -48,33 +46,27 @@ internal class WallSurfaceTracker {
         val fallback: DepthSurface,
     )
 
-    private val detector = WallDepthPlaneDetector()
     private val geometry = WallSurfaceGeometry()
     private var model: Model? = null
     private var cachedSurface: DepthSurface? = null
     private var lockedModel: LockedModel? = null
     private var state = WallSurfaceState.SEARCHING
-    private var lastScanAtMs = 0L
 
-    fun update(frame: Frame, width: Int, height: Int, nowMs: Long): WallSurfaceUpdate {
-        lockedSurface()?.let { return WallSurfaceUpdate(it, WallSurfaceState.LOCKED) }
-        if (width <= 0 || height <= 0) return current(nowMs)
-        if (nowMs - lastScanAtMs < SCAN_INTERVAL_MS) return current(nowMs)
-        lastScanAtMs = nowMs
-        detector.detect(frame, width, height)?.let { observe(it, nowMs, verified = false) }
+    fun observeSurface(
+        surface: DepthSurface,
+        nowMs: Long,
+        stableEvidence: Boolean,
+    ): WallSurfaceUpdate {
+        observe(surface, nowMs, stableEvidence)
         return current(nowMs)
     }
 
-    fun observePlane(plane: Plane, nowMs: Long): WallSurfaceUpdate {
-        val surface = geometry.fromPlane(plane) ?: return current(nowMs)
-        observe(surface.toCandidate(), nowMs, verified = true)
-        return current(nowMs)
-    }
+    fun advance(nowMs: Long): WallSurfaceUpdate = current(nowMs)
 
     fun lock(session: Session, fallbackSurface: DepthSurface? = null): Boolean {
         if (lockedModel != null) return true
         fallbackSurface?.let {
-            observe(it.toCandidate(), android.os.SystemClock.elapsedRealtime(), verified = true)
+            observe(it, android.os.SystemClock.elapsedRealtime(), stableEvidence = true)
         }
         if (state != WallSurfaceState.STABLE) return false
         val surface = renderSurface() ?: return false
@@ -114,23 +106,34 @@ internal class WallSurfaceTracker {
         model = null
         cachedSurface = null
         state = WallSurfaceState.SEARCHING
-        lastScanAtMs = 0L
     }
 
-    private fun observe(candidate: WallSurfaceCandidate, nowMs: Long, verified: Boolean) {
+    private fun observe(
+        surface: DepthSurface,
+        nowMs: Long,
+        stableEvidence: Boolean,
+    ) {
         val current = model
-        if (current == null || !isCompatible(current.plane, candidate.plane)) {
-            if (current != null && !verified && nowMs - current.lastEvidenceAtMs < REPLACE_AFTER_MS) return
-            model = createModel(candidate, nowMs, if (verified) STABLE_CONFIRMATIONS else 1)
+        if (current == null) {
+            model = createModel(surface, nowMs, if (stableEvidence) STABLE_CONFIRMATIONS else 1)
             cachedSurface = model?.let(::buildSurface)
-            state = if (verified) WallSurfaceState.STABLE else WallSurfaceState.PREVIEW
+            state = if (stableEvidence) WallSurfaceState.STABLE else WallSurfaceState.PREVIEW
+            return
+        }
+        if (!isCompatible(current.plane, surface.plane)) {
+            val canReplace = stableEvidence || current.confirmations < STABLE_CONFIRMATIONS ||
+                nowMs - current.lastEvidenceAtMs >= REPLACE_AFTER_MS
+            if (!canReplace) return
+            model = createModel(surface, nowMs, if (stableEvidence) STABLE_CONFIRMATIONS else 1)
+            cachedSurface = model?.let(::buildSurface)
+            state = if (stableEvidence) WallSurfaceState.STABLE else WallSurfaceState.PREVIEW
             return
         }
 
-        val points = candidate.samples.map(WallSurfaceSample::position)
-        if (!isConnected(current, points)) {
-            if (verified) {
-                model = createModel(candidate, nowMs, STABLE_CONFIRMATIONS)
+        val observedPoints = surface.corners.map(Pose::positionVec)
+        if (!isConnected(current, observedPoints)) {
+            if (stableEvidence) {
+                model = createModel(surface, nowMs, STABLE_CONFIRMATIONS)
                 cachedSurface = model?.let(::buildSurface)
                 state = WallSurfaceState.STABLE
             }
@@ -138,15 +141,15 @@ internal class WallSurfaceTracker {
         }
         expandBounds(
             current,
-            points,
-            if (verified) VERIFIED_MAX_GROWTH_METERS else MAX_GROWTH_METERS,
+            observedPoints,
+            if (stableEvidence) STABLE_MAX_GROWTH_METERS else MAX_GROWTH_METERS,
         )
-        current.lastEvidenceAtMs = nowMs
-        current.lastRect = candidate.rect.copyOf()
-        current.confirmations = if (verified) {
+        current.lastEvidenceAtMs = max(current.lastEvidenceAtMs, nowMs)
+        current.lastRect = surface.normalizedRect.copyOf()
+        current.confirmations = if (stableEvidence) {
             STABLE_CONFIRMATIONS
         } else {
-            (current.confirmations + 1).coerceAtMost(STABLE_CONFIRMATIONS)
+            current.confirmations
         }
         cachedSurface = buildSurface(current)
         state = if (current.confirmations >= STABLE_CONFIRMATIONS) {
@@ -166,17 +169,18 @@ internal class WallSurfaceTracker {
     }
 
     private fun createModel(
-        candidate: WallSurfaceCandidate,
+        surface: DepthSurface,
         nowMs: Long,
         confirmations: Int,
     ): Model {
-        val normal = candidate.plane.normal.verticalized()
+        val normal = surface.plane.normal.verticalized()
         val axisX = cross(WORLD_UP, normal).normalized()
         var axisY = cross(normal, axisX).normalized()
         if (axisY.dot(WORLD_UP) < 0f) axisY *= -1f
-        val point = candidate.plane.point
-        val xs = candidate.samples.map { (it.position - point).dot(axisX) }
-        val ys = candidate.samples.map { (it.position - point).dot(axisY) }
+        val point = surface.plane.point
+        val positions = surface.corners.map(Pose::positionVec)
+        val xs = positions.map { (it - point).dot(axisX) }
+        val ys = positions.map { (it - point).dot(axisY) }
         val xBounds = paddedBounds(xs.minOrNull() ?: 0f, xs.maxOrNull() ?: 0f)
         val yBounds = paddedBounds(ys.minOrNull() ?: 0f, ys.maxOrNull() ?: 0f)
         return Model(
@@ -189,7 +193,7 @@ internal class WallSurfaceTracker {
             yBounds.second,
             confirmations,
             nowMs,
-            candidate.rect.copyOf(),
+            surface.normalizedRect.copyOf(),
         )
     }
 
@@ -277,31 +281,18 @@ internal class WallSurfaceTracker {
         )
     }
 
-    private fun DepthSurface.toCandidate(): WallSurfaceCandidate {
-        val samples = corners.mapIndexed { index, pose ->
-            WallSurfaceSample(
-                normalizedRect[if (index == 0 || index == 3) 0 else 2],
-                normalizedRect[if (index < 2) 1 else 3],
-                pose.positionVec(),
-                plane.normal,
-            )
-        }
-        return WallSurfaceCandidate(plane, samples, normalizedRect)
-    }
-
     private companion object {
         val WORLD_UP = Vec3(0f, 1f, 0f)
-        const val SCAN_INTERVAL_MS = 280L
-        const val LOST_AFTER_MS = 1300L
-        const val REPLACE_AFTER_MS = 4500L
-        const val STABLE_CONFIRMATIONS = 3
-        const val COMPATIBLE_NORMAL_DOT = 0.94f
-        const val COMPATIBLE_DISTANCE_METERS = 0.10f
-        const val MAX_JOIN_GAP_METERS = 0.22f
+        const val LOST_AFTER_MS = 1800L
+        const val REPLACE_AFTER_MS = 4000L
+        const val STABLE_CONFIRMATIONS = 2
+        const val COMPATIBLE_NORMAL_DOT = 0.90f
+        const val COMPATIBLE_DISTANCE_METERS = 0.15f
+        const val MAX_JOIN_GAP_METERS = 0.28f
         const val EDGE_PADDING_METERS = 0.035f
         const val MIN_INITIAL_SIZE_METERS = 0.16f
-        const val MAX_GROWTH_METERS = 0.16f
-        const val VERIFIED_MAX_GROWTH_METERS = 0.30f
+        const val MAX_GROWTH_METERS = 0.22f
+        const val STABLE_MAX_GROWTH_METERS = 0.30f
         const val MAX_EXTENT_METERS = 3f
     }
 }

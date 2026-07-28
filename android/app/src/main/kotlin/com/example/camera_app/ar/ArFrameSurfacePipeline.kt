@@ -20,15 +20,15 @@ internal class ArFrameSurfacePipeline {
     private val depthSurfaceRenderer = ArDepthSurfaceRenderer()
     private val depthSurfaceTracker = DepthSurfaceTracker()
     private val surfaceHitTester = ArSurfaceHitTester()
-    private val activePlaneSelector = ArActivePlaneSelector()
-    private val wallSurfaceTracker = WallSurfaceTracker()
+    private val shelfPlaneSelector = ArActivePlaneSelector()
+    private val wallScanEngine = WallScanEngine()
 
     private var latestFrame: com.google.ar.core.Frame? = null
     private var latestDepthSurface: DepthSurface? = null
     private var lastDepthScanAtMs = 0L
     private var lastDepthSurfaceAtMs = 0L
     private var depthDetectionStreak = 0
-    private var selectedPlane: Plane? = null
+    private var selectedShelfPlane: Plane? = null
     private var scanMode = ArSurfaceScanMode.SHELF
     @Volatile private var surfaceWidth = 0
     @Volatile private var surfaceHeight = 0
@@ -64,20 +64,20 @@ internal class ArFrameSurfacePipeline {
         val trackedPlanes = session.getAllTrackables(Plane::class.java)
             .filter { it.trackingState == TrackingState.TRACKING && it.subsumedBy == null }
         if (scanMode == ArSurfaceScanMode.WALL) {
-            return drawWallFrame(frame, trackedPlanes, showPlanes)
+            return drawWallFrame(frame, trackedPlanes, showPlanes, depthSupported)
         }
         updateDepthSurface(frame, depthSupported)
-        val activePlane = activePlaneSelector.select(
+        val activePlane = shelfPlaneSelector.select(
             frame,
             trackedPlanes,
             surfaceWidth,
             surfaceHeight,
             SystemClock.elapsedRealtime(),
         )
-        selectedPlane = activePlane
+        selectedShelfPlane = activePlane
         if (showPlanes) {
             activePlane?.let { planeRenderer.draw(frame.camera, listOf(it)) }
-            if (activePlane == null && !activePlaneSelector.holdsSelection) {
+            if (activePlane == null && !shelfPlaneSelector.holdsSelection) {
                 currentDepthSurface()?.let { depthSurface ->
                     if (!hasMatchingArCorePlane(depthSurface, trackedPlanes)) {
                         depthSurfaceRenderer.draw(frame.camera, depthSurface)
@@ -87,7 +87,7 @@ internal class ArFrameSurfacePipeline {
         }
         val detectedSurfaceCount = if (activePlane != null) {
             1
-        } else if (!activePlaneSelector.holdsSelection &&
+        } else if (!shelfPlaneSelector.holdsSelection &&
             depthDetectionStreak >= REQUIRED_DEPTH_DETECTION_STREAK
         ) {
             1
@@ -102,9 +102,9 @@ internal class ArFrameSurfacePipeline {
     fun hitTestPlaneQuad(points: List<Map<String, Any>>): ArrayList<DoubleArray>? {
         val frame = latestFrame ?: return null
         if (points.isEmpty()) return null
-        if (scanMode == ArSurfaceScanMode.WALL) return hitTestWallQuad(frame, points)
-        val targetPlane = selectedPlane
-        if (targetPlane == null && activePlaneSelector.holdsSelection) return null
+        if (scanMode == ArSurfaceScanMode.WALL) return hitTestWallQuad(frame)
+        val targetPlane = selectedShelfPlane
+        if (targetPlane == null && shelfPlaneSelector.holdsSelection) return null
         val planeHits = surfaceHitTester.hitTestPlaneQuad(
             frame,
             surfaceWidth,
@@ -126,23 +126,15 @@ internal class ArFrameSurfacePipeline {
     ): HashMap<String, Any>? {
         val frame = latestFrame ?: return null
         if (scanMode == ArSurfaceScanMode.WALL) {
-            val targetPlane = selectedPlane
-            val planeResult = surfaceHitTester.hitTestPlaneViewport(
-                frame,
-                surfaceWidth,
-                surfaceHeight,
-                columns,
-                rows,
-                marginX,
-                marginY,
-                targetPlane,
-            )
-            if (planeResult != null) return planeResult
-            return wallSurfaceTracker.visibleSurface(frame.camera, surfaceWidth, surfaceHeight)
+            val update = wallScanEngine.renderUpdate(SystemClock.elapsedRealtime())
+            if (update.state != WallSurfaceState.STABLE && update.state != WallSurfaceState.LOCKED) {
+                return null
+            }
+            return wallScanEngine.visibleSurface(frame.camera, surfaceWidth, surfaceHeight)
                 ?.let(::serializeDepthSurface)
         }
-        val targetPlane = selectedPlane
-        if (targetPlane == null && activePlaneSelector.holdsSelection) return null
+        val targetPlane = selectedShelfPlane
+        if (targetPlane == null && shelfPlaneSelector.holdsSelection) return null
         val planeResult = surfaceHitTester.hitTestPlaneViewport(
             frame,
             surfaceWidth,
@@ -170,7 +162,7 @@ internal class ArFrameSurfacePipeline {
 
     fun setSurfaceLocked(session: Session, locked: Boolean) {
         if (scanMode == ArSurfaceScanMode.WALL) {
-            if (locked) wallSurfaceTracker.lock(session) else wallSurfaceTracker.unlock()
+            if (locked) wallScanEngine.lock(session) else wallScanEngine.unlock()
         } else {
             depthSurfaceTracker.setLocked(locked)
         }
@@ -186,8 +178,12 @@ internal class ArFrameSurfacePipeline {
     }
 
     fun restartPlaneSelection() {
-        activePlaneSelector.reset()
-        selectedPlane = null
+        if (scanMode == ArSurfaceScanMode.WALL) {
+            wallScanEngine.restartSelection()
+        } else {
+            shelfPlaneSelector.reset()
+            selectedShelfPlane = null
+        }
     }
 
     fun reset() {
@@ -196,29 +192,27 @@ internal class ArFrameSurfacePipeline {
         lastDepthScanAtMs = 0L
         lastDepthSurfaceAtMs = 0L
         depthDetectionStreak = 0
-        selectedPlane = null
+        selectedShelfPlane = null
         depthSurfaceTracker.reset()
-        activePlaneSelector.reset()
-        wallSurfaceTracker.reset()
+        shelfPlaneSelector.reset()
+        wallScanEngine.reset()
     }
 
     private fun drawWallFrame(
         frame: com.google.ar.core.Frame,
         trackedPlanes: List<Plane>,
         showPlanes: Boolean,
+        depthSupported: Boolean,
     ): ArFrameUpdate {
         val now = SystemClock.elapsedRealtime()
-        var update = wallSurfaceTracker.update(frame, surfaceWidth, surfaceHeight, now)
-        val verticalPlanes = trackedPlanes.filter { it.type == Plane.Type.VERTICAL }
-        val activePlane = activePlaneSelector.select(
+        val update = wallScanEngine.update(
             frame,
-            verticalPlanes,
+            trackedPlanes,
             surfaceWidth,
             surfaceHeight,
             now,
+            depthSupported,
         )
-        selectedPlane = activePlane
-        if (activePlane != null) update = wallSurfaceTracker.observePlane(activePlane, now)
         if (showPlanes) {
             update.surface?.let { depthSurfaceRenderer.draw(frame.camera, it, update.state) }
         }
@@ -230,19 +224,10 @@ internal class ArFrameSurfacePipeline {
 
     private fun hitTestWallQuad(
         frame: com.google.ar.core.Frame,
-        points: List<Map<String, Any>>,
     ): ArrayList<DoubleArray>? {
-        val planeHits = surfaceHitTester.hitTestPlaneQuad(
-            frame,
-            surfaceWidth,
-            surfaceHeight,
-            points,
-            selectedPlane,
-        )
-        if (planeHits != null) return planeHits
-        val update = wallSurfaceTracker.renderUpdate(SystemClock.elapsedRealtime())
+        val update = wallScanEngine.renderUpdate(SystemClock.elapsedRealtime())
         if (update.state != WallSurfaceState.STABLE && update.state != WallSurfaceState.LOCKED) return null
-        val visible = wallSurfaceTracker.visibleSurface(frame.camera, surfaceWidth, surfaceHeight) ?: return null
+        val visible = wallScanEngine.visibleSurface(frame.camera, surfaceWidth, surfaceHeight) ?: return null
         return ArrayList(visible.corners.map(::serializePose))
     }
 
