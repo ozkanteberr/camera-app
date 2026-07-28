@@ -23,7 +23,11 @@ internal class ArDepthSurfaceRenderer {
         colorUniform = GLES20.glGetUniformLocation(program, "u_Color")
     }
 
-    fun draw(camera: Camera, surface: DepthSurface) {
+    fun draw(
+        camera: Camera,
+        surface: DepthSurface,
+        wallState: WallSurfaceState? = null,
+    ) {
         if (surface.corners.size != 4) return
         vertices.clear()
         surface.corners.forEach { pose -> vertices.put(pose.tx()).put(pose.ty()).put(pose.tz()) }
@@ -43,10 +47,11 @@ internal class ArDepthSurfaceRenderer {
         GLES20.glUniformMatrix4fv(mvpUniform, 1, false, mvp, 0)
         GLES20.glEnableVertexAttribArray(positionAttribute)
         GLES20.glVertexAttribPointer(positionAttribute, 3, GLES20.GL_FLOAT, false, 0, vertices)
-        GLES20.glUniform4f(colorUniform, 0.48f, 0.50f, 0.54f, 0.16f)
+        val colors = colorsFor(wallState)
+        GLES20.glUniform4f(colorUniform, colors[0], colors[1], colors[2], colors[3])
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_FAN, 0, 4)
         vertices.position(0)
-        GLES20.glUniform4f(colorUniform, 0.78f, 0.80f, 0.84f, 0.68f)
+        GLES20.glUniform4f(colorUniform, colors[4], colors[5], colors[6], colors[7])
         GLES20.glLineWidth(2.5f)
         GLES20.glDrawArrays(GLES20.GL_LINE_LOOP, 0, 4)
         GLES20.glDisableVertexAttribArray(positionAttribute)
@@ -54,7 +59,20 @@ internal class ArDepthSurfaceRenderer {
         GLES20.glDisable(GLES20.GL_BLEND)
     }
 
+    private fun colorsFor(state: WallSurfaceState?): FloatArray = when (state) {
+        WallSurfaceState.PREVIEW -> PREVIEW_COLORS
+        WallSurfaceState.STABLE -> STABLE_COLORS
+        WallSurfaceState.TEMPORARILY_LOST -> LOST_COLORS
+        WallSurfaceState.LOCKED -> LOCKED_COLORS
+        else -> DEFAULT_COLORS
+    }
+
     private companion object {
+        val DEFAULT_COLORS = floatArrayOf(0.48f, 0.50f, 0.54f, 0.16f, 0.78f, 0.80f, 0.84f, 0.68f)
+        val PREVIEW_COLORS = floatArrayOf(1f, 0.55f, 0.05f, 0.20f, 1f, 0.68f, 0.20f, 0.92f)
+        val STABLE_COLORS = floatArrayOf(0.15f, 0.88f, 0.48f, 0.22f, 0.30f, 1f, 0.62f, 0.94f)
+        val LOST_COLORS = floatArrayOf(0.72f, 0.42f, 0.12f, 0.12f, 0.95f, 0.62f, 0.25f, 0.55f)
+        val LOCKED_COLORS = floatArrayOf(0.05f, 0.76f, 0.72f, 0.24f, 0.20f, 1f, 0.92f, 0.98f)
         const val VERTEX_SHADER = """
             uniform mat4 u_Mvp;
             attribute vec3 a_Position;

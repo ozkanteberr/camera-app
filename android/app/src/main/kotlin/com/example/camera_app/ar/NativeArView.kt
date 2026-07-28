@@ -9,7 +9,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
-import android.os.SystemClock
 import android.util.Log
 import android.view.MotionEvent
 import android.view.View
@@ -50,7 +49,6 @@ class NativeArView(
     @Volatile private var arCoreReady = false
     @Volatile private var sessionStarting = false
     @Volatile private var readyReported = false
-    @Volatile private var startupStartedAtMs = 0L
     @Volatile private var showPlanes = true
     @Volatile private var callbacksEnabled = true
     @Volatile private var planeMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
@@ -117,10 +115,10 @@ class NativeArView(
                 val frameUpdate = pipeline.drawFrame(activeSession, showPlanes, depthSupported)
                 if (!readyReported && frameUpdate.timestamp != 0L) {
                     readyReported = true
-                    Log.i(TAG, "First camera frame in ${SystemClock.elapsedRealtime() - startupStartedAtMs} ms")
                     channels.reportSessionReady()
                 }
                 channels.reportPlaneCount(frameUpdate.detectedSurfaceCount, callbacksEnabled)
+                channels.reportSurfaceState(frameUpdate.surfaceState)
             } catch (error: Exception) {
                 channels.reportError("AR frame update failed: ${error.message ?: error.javaClass.simpleName}")
             }
@@ -131,7 +129,6 @@ class NativeArView(
         when (call.method) {
             "init" -> {
                 initRequested = true
-                if (startupStartedAtMs == 0L) startupStartedAtMs = SystemClock.elapsedRealtime()
                 showPlanes = call.argument<Boolean>("showPlanes") ?: true
                 planeMode = planeFindingModeFor(call.argument<Int>("planeDetectionConfig") ?: 3)
                 callbacksEnabled = planeMode != Config.PlaneFindingMode.DISABLED
@@ -157,6 +154,22 @@ class NativeArView(
                 showPlanes = call.argument<Boolean>("showPlanes") ?: false
                 result.success(null)
             }
+            "setSurfaceScanMode" -> {
+                val mode = ArSurfaceScanMode.fromWireValue(call.argument("mode"))
+                callbacksEnabled = true
+                sessionHandler.post {
+                    synchronized(sessionLock) {
+                        pipeline.setScanMode(mode)
+                        channels.resetPlaneCount()
+                        session?.let { activeSession ->
+                            val config = activeSession.config
+                            config.planeFindingMode = planeMode
+                            activeSession.configure(config)
+                        }
+                    }
+                }
+                result.success(null)
+            }
             "setPlaneDetectionEnabled" -> {
                 val enabled = call.argument<Boolean>("enabled") ?: true
                 val restart = enabled && !callbacksEnabled
@@ -177,7 +190,7 @@ class NativeArView(
                                 pipeline.restartPlaneSelection()
                                 channels.resetPlaneCount()
                             }
-                            pipeline.setDepthLocked(!enabled)
+                            session?.let { pipeline.setSurfaceLocked(it, !enabled) }
                             session?.let { activeSession ->
                                 val config = activeSession.config
                                 config.planeFindingMode = if (enabled) planeMode else Config.PlaneFindingMode.DISABLED
@@ -224,11 +237,9 @@ class NativeArView(
     private fun checkArCoreAvailabilityAsync() {
         if (availabilityCheckInProgress || disposed) return
         availabilityCheckInProgress = true
-        val checkStartedAt = SystemClock.elapsedRealtime()
         ArCoreApk.getInstance().checkAvailabilityAsync(activity.applicationContext) { availability ->
             availabilityCheckInProgress = false
             if (disposed) return@checkAvailabilityAsync
-            Log.i(TAG, "Availability $availability in ${SystemClock.elapsedRealtime() - checkStartedAt} ms")
             when (availability) {
                 ArCoreApk.Availability.SUPPORTED_INSTALLED -> {
                     verifyInstalledArCoreAsync()
@@ -245,12 +256,10 @@ class NativeArView(
         installCheckInProgress = true
         sessionHandler.post {
             try {
-                val installStartedAt = SystemClock.elapsedRealtime()
                 when (ArCoreApk.getInstance().requestInstall(activity, userRequestedInstall)) {
                     ArCoreApk.InstallStatus.INSTALL_REQUESTED -> userRequestedInstall = false
                     ArCoreApk.InstallStatus.INSTALLED -> arCoreReady = true
                 }
-                Log.i(TAG, "Installed ARCore verified in ${SystemClock.elapsedRealtime() - installStartedAt} ms")
             } catch (error: Exception) {
                 channels.reportError("ARCore installation check failed: ${error.message ?: error.javaClass.simpleName}")
             } finally {
@@ -262,7 +271,6 @@ class NativeArView(
 
     private fun requestArCoreInstall() {
         try {
-            val installStartedAt = SystemClock.elapsedRealtime()
             when (ArCoreApk.getInstance().requestInstall(activity, userRequestedInstall)) {
                 ArCoreApk.InstallStatus.INSTALL_REQUESTED -> userRequestedInstall = false
                 ArCoreApk.InstallStatus.INSTALLED -> {
@@ -270,7 +278,6 @@ class NativeArView(
                     queueSessionStart()
                 }
             }
-            Log.i(TAG, "Install request handled in ${SystemClock.elapsedRealtime() - installStartedAt} ms")
         } catch (error: Exception) {
             channels.reportError("ARCore installation check failed: ${error.message ?: error.javaClass.simpleName}")
         }
@@ -284,19 +291,15 @@ class NativeArView(
                 synchronized(sessionLock) {
                     if (disposed || !activityResumed) return@synchronized
                     if (session == null) {
-                        val createStartedAt = SystemClock.elapsedRealtime()
                         session = Session(activity)
-                        Log.i(TAG, "Session created in ${SystemClock.elapsedRealtime() - createStartedAt} ms")
                         configureSessionLocked()
                         session?.let { pipeline.applyDisplayGeometry(it, activity.displayRotation()) }
                         cameraTextureBound = false
                         readyReported = false
                     }
                     if (!sessionResumed && activityResumed) {
-                        val resumeStartedAt = SystemClock.elapsedRealtime()
                         session?.resume()
                         sessionResumed = true
-                        Log.i(TAG, "Session resumed in ${SystemClock.elapsedRealtime() - resumeStartedAt} ms")
                     }
                 }
             } catch (error: Exception) {

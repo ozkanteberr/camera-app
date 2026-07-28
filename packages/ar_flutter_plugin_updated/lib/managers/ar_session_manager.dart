@@ -14,6 +14,7 @@ typedef ARHitResultHandler = void Function(List<ARHitTestResult> hits);
 typedef ARPlaneResultHandler = void Function(int planeCount);
 typedef ErrorHandler = void Function(String error);
 typedef ARSessionReadyHandler = void Function();
+typedef ARSurfaceStateHandler = void Function(String state);
 
 /// Manages the session configuration, parameters and events of an [ARView]
 class ARSessionManager {
@@ -41,6 +42,9 @@ class ARSessionManager {
 
   /// Called after Android ARCore delivers the first camera frame.
   ARSessionReadyHandler? onSessionReady;
+
+  /// Reports wall/cabinet surface lifecycle: searching, preview, stable, lost or locked.
+  ARSurfaceStateHandler? onSurfaceStateChanged;
 
   ARSessionManager(int id, this.buildContext, this.planeDetectionConfig,
       {this.debug = false}) {
@@ -74,7 +78,8 @@ class ARSessionManager {
               .toList(growable: false),
         },
       );
-      if (serializedHits == null || serializedHits.length != normalizedPoints.length) {
+      if (serializedHits == null ||
+          serializedHits.length != normalizedPoints.length) {
         return null;
       }
       return serializedHits
@@ -85,6 +90,7 @@ class ARSessionManager {
       return null;
     }
   }
+
   /// Returns the largest visible area of the currently tracked plane in normalized screen coordinates.
   Future<Map<String, Object>?> hitTestPlaneViewport({
     int columns = 9,
@@ -140,6 +146,15 @@ class ARSessionManager {
       print('Error caught: ' + e.toString());
     }
   }
+
+  Future<void> setSurfaceScanMode(String mode) async {
+    try {
+      await _channel.invokeMethod<void>('setSurfaceScanMode', {'mode': mode});
+    } catch (e) {
+      print('Error caught: ' + e.toString());
+    }
+  }
+
   /// Returns the given anchor pose in Matrix4 format with respect to the world coordinate system of the [ARView]
   Future<Matrix4?> getPose(ARAnchor anchor) async {
     try {
@@ -252,6 +267,9 @@ class ARSessionManager {
         case 'onSessionReady':
           onSessionReady?.call();
           break;
+        case 'onSurfaceStateChanged':
+          onSurfaceStateChanged?.call(call.arguments as String);
+          break;
         case 'dispose':
           _channel.invokeMethod<void>("dispose");
           break;
@@ -299,6 +317,7 @@ class ARSessionManager {
     _disposed = true;
     onError = null;
     onSessionReady = null;
+    onSurfaceStateChanged = null;
     try {
       await _channel.invokeMethod<void>("dispose");
     } catch (e) {

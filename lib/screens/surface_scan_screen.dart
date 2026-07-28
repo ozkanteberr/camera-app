@@ -58,7 +58,9 @@ Uint8List? _composeSurfaceScanInBackground(List<Map<String, Object>> frames) {
   } catch (_) {
     return null;
   } finally {
-    try { PanoramaStitcher.clearSurface(); } catch (_) {}
+    try {
+      PanoramaStitcher.clearSurface();
+    } catch (_) {}
   }
 }
 
@@ -97,6 +99,9 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
   vmath.Vector3? _surfaceAxisX;
   vmath.Vector3? _surfaceAxisY;
   _SurfaceScanStage _stage = _SurfaceScanStage.starting;
+  _SurfaceScanMode _scanMode = _SurfaceScanMode.shelf;
+  _WallSurfaceTrackingState _wallTrackingState =
+      _WallSurfaceTrackingState.searching;
 
   bool _isInitialized = false;
   bool _isCapturing = false;
@@ -115,16 +120,20 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
 
   bool get _supportsAr {
     if (kIsWeb) return false;
-    return defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS;
+    return defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS;
   }
 
-  bool get _hasLockedSurface => _surfaceOrigin != null && _surfaceAxisX != null && _surfaceAxisY != null;
+  bool get _hasLockedSurface =>
+      _surfaceOrigin != null && _surfaceAxisX != null && _surfaceAxisY != null;
 
   @override
   void dispose() {
     _detectedTimer?.cancel();
     _stopSurfacePreviewTracking();
-    try { PanoramaStitcher.clearSurface(); } catch (_) {}
+    try {
+      PanoramaStitcher.clearSurface();
+    } catch (_) {}
     _arSessionManager?.dispose();
     super.dispose();
   }
@@ -133,7 +142,10 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
   Widget build(BuildContext context) {
     if (!_supportsAr) return _buildUnsupportedScreen();
     return WillPopScope(
-      onWillPop: () async { await _arSessionManager?.dispose(); return true; },
+      onWillPop: () async {
+        await _arSessionManager?.dispose();
+        return true;
+      },
       child: Scaffold(
         backgroundColor: Colors.black,
         body: Stack(
@@ -142,18 +154,22 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
             ARView(
               onARViewCreated: _onARViewCreated,
               planeDetectionConfig: PlaneDetectionConfig.horizontalAndVertical,
-              permissionPromptDescription: 'surface_scan_camera_permission'.tr(),
+              permissionPromptDescription:
+                  'surface_scan_camera_permission'.tr(),
               permissionPromptButtonText: 'confirm'.tr(),
             ),
             _buildTopBar(),
             _buildStatusPill(),
             _buildPlaneStateChip(),
+            _buildModeSelector(),
             _buildCoverageOverlay(),
             _buildSettingsPanel(),
             if (_capturedFrames.isNotEmpty) _buildFramesRibbon(),
             _buildBottomControls(),
             if (!_isInitialized) _buildLoadingOverlay(),
-            if (_showFlash) Positioned.fill(child: Container(color: Colors.white.withOpacity(0.82))),
+            if (_showFlash)
+              Positioned.fill(
+                  child: Container(color: Colors.white.withOpacity(0.82))),
           ],
         ),
       ),
@@ -184,8 +200,14 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
     final stream = provider.resolve(const ImageConfiguration());
     late ImageStreamListener listener;
     listener = ImageStreamListener(
-      (ImageInfo info, bool syncCall) { completer.complete(info.image); stream.removeListener(listener); },
-      onError: (dynamic exception, StackTrace? stackTrace) { completer.completeError(exception, stackTrace); stream.removeListener(listener); },
+      (ImageInfo info, bool syncCall) {
+        completer.complete(info.image);
+        stream.removeListener(listener);
+      },
+      onError: (dynamic exception, StackTrace? stackTrace) {
+        completer.completeError(exception, stackTrace);
+        stream.removeListener(listener);
+      },
     );
     stream.addListener(listener);
     return completer.future;
@@ -196,9 +218,12 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
     final image = await _resolveImageProvider(provider);
     try {
       final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-      if (byteData == null) throw StateError('Snapshot image could not be encoded.');
+      if (byteData == null)
+        throw StateError('Snapshot image could not be encoded.');
       return byteData.buffer.asUint8List();
-    } finally { image.dispose(); }
+    } finally {
+      image.dispose();
+    }
   }
 
   Rect _clampNormalizedRect(Rect rect) => Rect.fromLTRB(
@@ -215,7 +240,8 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
         Offset(rect.left, rect.bottom),
       ];
 
-  Future<Uint8List?> _stitchFramesSideBySide(List<_CapturedSurfaceFrame> frames) async {
+  Future<Uint8List?> _stitchFramesSideBySide(
+      List<_CapturedSurfaceFrame> frames) async {
     if (frames.isEmpty) return null;
     if (frames.length == 1) return frames.first.croppedBytes;
     final decodedImages = <ui.Image>[];
@@ -226,10 +252,13 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
       }
       var targetHeight = decodedImages.first.height.toDouble();
       for (final image in decodedImages.skip(1)) {
-        targetHeight = math.max(targetHeight, image.height.toDouble()).toDouble();
+        targetHeight =
+            math.max(targetHeight, image.height.toDouble()).toDouble();
       }
       targetHeight = math.min(targetHeight, 1200.0).toDouble();
-      final widths = decodedImages.map((i) => (i.width * targetHeight / i.height).round()).toList();
+      final widths = decodedImages
+          .map((i) => (i.width * targetHeight / i.height).round())
+          .toList();
       final totalWidth = widths.reduce((a, b) => a + b);
       final recorder = ui.PictureRecorder();
       final canvas = ui.Canvas(recorder);
@@ -238,21 +267,36 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
       for (var i = 0; i < decodedImages.length; i++) {
         final image = decodedImages[i];
         final width = widths[i].toDouble();
-        canvas.drawImageRect(image, Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()), Rect.fromLTWH(x, 0, width, targetHeight), paint);
+        canvas.drawImageRect(
+            image,
+            Rect.fromLTWH(
+                0, 0, image.width.toDouble(), image.height.toDouble()),
+            Rect.fromLTWH(x, 0, width, targetHeight),
+            paint);
         x += width;
       }
-      final stitchedImage = await recorder.endRecording().toImage(totalWidth, targetHeight.round());
+      final stitchedImage = await recorder
+          .endRecording()
+          .toImage(totalWidth, targetHeight.round());
       try {
-        final byteData = await stitchedImage.toByteData(format: ui.ImageByteFormat.png);
+        final byteData =
+            await stitchedImage.toByteData(format: ui.ImageByteFormat.png);
         return byteData?.buffer.asUint8List();
-      } finally { stitchedImage.dispose(); }
+      } finally {
+        stitchedImage.dispose();
+      }
     } catch (e) {
       debugPrint('Surface fallback merge error: $e');
       return null;
-    } finally { for (final image in decodedImages) { image.dispose(); } }
+    } finally {
+      for (final image in decodedImages) {
+        image.dispose();
+      }
+    }
   }
 
-  Future<Uint8List?> _composeSurfaceWithOpenCv(List<_CapturedSurfaceFrame> frames) async {
+  Future<Uint8List?> _composeSurfaceWithOpenCv(
+      List<_CapturedSurfaceFrame> frames) async {
     if (frames.isEmpty) return null;
     final payload = frames
         .map((frame) => <String, Object>{
@@ -265,7 +309,8 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
 
   Widget _buildLoadingOverlay() => Container(
         color: Colors.black.withOpacity(0.34),
-        child: const Center(child: CircularProgressIndicator(color: Colors.white)),
+        child:
+            const Center(child: CircularProgressIndicator(color: Colors.white)),
       );
 
   Widget _buildTopBar() => SafeArea(
@@ -274,15 +319,28 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _buildCircleButton(icon: Icons.arrow_back_ios_new, onPressed: () => Navigator.of(context).maybePop()),
-              AnimatedOpacity(duration: const Duration(milliseconds: 160), opacity: _capturedFrames.isEmpty ? 0 : 1, child: _buildCaptureCounter()),
+              _buildCircleButton(
+                  icon: Icons.arrow_back_ios_new,
+                  onPressed: () => Navigator.of(context).maybePop()),
+              AnimatedOpacity(
+                  duration: const Duration(milliseconds: 160),
+                  opacity: _capturedFrames.isEmpty ? 0 : 1,
+                  child: _buildCaptureCounter()),
             ],
           ),
         ),
       );
 
   Widget _buildStatusPill() {
-    final isActive = _stage == _SurfaceScanStage.detected || _stage == _SurfaceScanStage.locked;
+    final isActive = _stage == _SurfaceScanStage.detected ||
+        _stage == _SurfaceScanStage.locked;
+    final statusColor = _scanMode == _SurfaceScanMode.wall &&
+            (_wallTrackingState == _WallSurfaceTrackingState.preview ||
+                _wallTrackingState == _WallSurfaceTrackingState.lost)
+        ? Colors.orangeAccent
+        : isActive
+            ? Colors.greenAccent
+            : Colors.white;
     return SafeArea(
       child: Align(
         alignment: Alignment.topCenter,
@@ -294,15 +352,24 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
           decoration: BoxDecoration(
             color: Colors.white.withOpacity(0.92),
             borderRadius: BorderRadius.circular(20.r),
-            border: Border.all(color: isActive ? Colors.greenAccent.withOpacity(0.95) : Colors.white.withOpacity(0.55), width: 1.2.r),
-            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.22), blurRadius: 14.r, offset: Offset(0, 6.h))],
+            border:
+                Border.all(color: statusColor.withOpacity(0.80), width: 1.2.r),
+            boxShadow: [
+              BoxShadow(
+                  color: Colors.black.withOpacity(0.22),
+                  blurRadius: 14.r,
+                  offset: Offset(0, 6.h))
+            ],
           ),
           child: Text(
             _stageLabelKey.tr(),
             textAlign: TextAlign.center,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: _stage == _SurfaceScanStage.locked ? Colors.green.shade700 : Colors.grey.shade800, fontSize: 14.sp, fontWeight: FontWeight.w800),
+            style: TextStyle(
+                color: isActive ? Colors.green.shade700 : Colors.grey.shade800,
+                fontSize: 14.sp,
+                fontWeight: FontWeight.w800),
           ),
         ),
       ),
@@ -311,7 +378,13 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
 
   Widget _buildPlaneStateChip() {
     if (!_isInitialized) return const SizedBox.shrink();
-    final hasPlane = _planeCount > 0;
+    final hasPlane = _scanMode == _SurfaceScanMode.wall
+        ? _wallTrackingState == _WallSurfaceTrackingState.stable ||
+            _wallTrackingState == _WallSurfaceTrackingState.locked
+        : _planeCount > 0;
+    final label = _scanMode == _SurfaceScanMode.wall
+        ? _wallTrackingLabelKey.tr()
+        : '${'surface_scan_planes'.tr()}: $_planeCount';
     return SafeArea(
       child: Align(
         alignment: Alignment.topCenter,
@@ -322,9 +395,68 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
           decoration: BoxDecoration(
             color: Colors.black.withOpacity(0.48),
             borderRadius: BorderRadius.circular(16.r),
-            border: Border.all(color: hasPlane ? Colors.greenAccent.withOpacity(0.55) : Colors.white.withOpacity(0.18)),
+            border: Border.all(
+                color: hasPlane
+                    ? Colors.greenAccent.withOpacity(0.55)
+                    : Colors.white.withOpacity(0.18)),
           ),
-          child: Text('${'surface_scan_planes'.tr()}: $_planeCount', style: TextStyle(color: hasPlane ? Colors.greenAccent : Colors.white70, fontSize: 12.sp, fontWeight: FontWeight.w700)),
+          child: Text(label,
+              style: TextStyle(
+                  color: hasPlane ? Colors.greenAccent : Colors.white70,
+                  fontSize: 12.sp,
+                  fontWeight: FontWeight.w700)),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildModeSelector() {
+    if (!_isInitialized) return const SizedBox.shrink();
+    return SafeArea(
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: Container(
+          width: 272.w,
+          height: 38.h,
+          margin: EdgeInsets.only(top: 91.h),
+          padding: EdgeInsets.all(3.r),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.52),
+            borderRadius: BorderRadius.circular(19.r),
+            border: Border.all(color: Colors.white.withOpacity(0.18)),
+          ),
+          child: Row(
+            children: _SurfaceScanMode.values.map((mode) {
+              final selected = mode == _scanMode;
+              return Expanded(
+                child: GestureDetector(
+                  onTap: _isCapturing || _isMerging
+                      ? null
+                      : () => unawaited(_changeScanMode(mode)),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: selected
+                          ? Colors.white.withOpacity(0.94)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(16.r),
+                    ),
+                    child: Text(
+                      mode.labelKey.tr(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: selected ? Colors.black87 : Colors.white70,
+                        fontSize: 11.sp,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }).toList(growable: false),
+          ),
         ),
       ),
     );
@@ -332,7 +464,8 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
 
   Widget _buildCoverageOverlay() {
     final geometry = _latestSurfaceGeometry;
-    if (_stage != _SurfaceScanStage.locked || geometry == null) return const SizedBox.shrink();
+    if (_stage != _SurfaceScanStage.locked || geometry == null)
+      return const SizedBox.shrink();
     return Positioned.fill(
       child: IgnorePointer(
         child: CustomPaint(
@@ -345,6 +478,7 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
       ),
     );
   }
+
   Widget _buildFramesRibbon() => Positioned(
         bottom: 112.h,
         left: 70.w,
@@ -352,7 +486,11 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
         child: Container(
           height: 72.h,
           padding: EdgeInsets.symmetric(vertical: 6.h, horizontal: 8.w),
-          decoration: BoxDecoration(color: Colors.black.withOpacity(0.65), borderRadius: BorderRadius.circular(12.r), border: Border.all(color: Colors.white.withOpacity(0.15), width: 1.r)),
+          decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.65),
+              borderRadius: BorderRadius.circular(12.r),
+              border: Border.all(
+                  color: Colors.white.withOpacity(0.15), width: 1.r)),
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
             itemCount: _capturedFrames.length,
@@ -361,18 +499,30 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
               return Container(
                 margin: EdgeInsets.only(right: 8.w),
                 width: 90.w,
-                decoration: BoxDecoration(borderRadius: BorderRadius.circular(6.r), border: Border.all(color: Colors.white.withOpacity(0.35), width: 1.5.r)),
+                decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(6.r),
+                    border: Border.all(
+                        color: Colors.white.withOpacity(0.35), width: 1.5.r)),
                 clipBehavior: Clip.antiAlias,
                 child: Stack(
                   children: [
-                    Positioned.fill(child: Image.memory(frame.croppedBytes, fit: BoxFit.cover)),
+                    Positioned.fill(
+                        child: Image.memory(frame.croppedBytes,
+                            fit: BoxFit.cover)),
                     Positioned(
                       top: 2.h,
                       left: 4.w,
                       child: Container(
-                        padding: EdgeInsets.symmetric(horizontal: 5.w, vertical: 2.h),
-                        decoration: BoxDecoration(color: Colors.black.withOpacity(0.6), borderRadius: BorderRadius.circular(4.r)),
-                        child: Text('#${frame.index}', style: TextStyle(color: Colors.white, fontSize: 9.sp, fontWeight: FontWeight.w900)),
+                        padding: EdgeInsets.symmetric(
+                            horizontal: 5.w, vertical: 2.h),
+                        decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.6),
+                            borderRadius: BorderRadius.circular(4.r)),
+                        child: Text('#${frame.index}',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 9.sp,
+                                fontWeight: FontWeight.w900)),
                       ),
                     ),
                   ],
@@ -395,17 +545,37 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
           child: Container(
             width: 286.w,
             padding: EdgeInsets.fromLTRB(14.w, 12.h, 14.w, 12.h),
-            decoration: BoxDecoration(color: Colors.black.withOpacity(0.64), borderRadius: BorderRadius.circular(14.r), border: Border.all(color: Colors.white.withOpacity(0.22))),
+            decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.64),
+                borderRadius: BorderRadius.circular(14.r),
+                border: Border.all(color: Colors.white.withOpacity(0.22))),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('surface_scan_settings'.tr(), style: TextStyle(color: Colors.white, fontSize: 15.sp, fontWeight: FontWeight.w800)),
+                Text('surface_scan_settings'.tr(),
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 15.sp,
+                        fontWeight: FontWeight.w800)),
                 SizedBox(height: 8.h),
-                _buildSwitchRow(label: 'surface_scan_show_planes'.tr(), value: _showPlanes, onChanged: (value) { setState(() => _showPlanes = value); _updateSessionSettings(); }),
-                _buildSwitchRow(label: 'surface_scan_feature_points'.tr(), value: _showFeaturePoints, onChanged: (value) { setState(() => _showFeaturePoints = value); _updateSessionSettings(); }),
+                _buildSwitchRow(
+                    label: 'surface_scan_show_planes'.tr(),
+                    value: _showPlanes,
+                    onChanged: (value) {
+                      setState(() => _showPlanes = value);
+                      _updateSessionSettings();
+                    }),
+                _buildSwitchRow(
+                    label: 'surface_scan_feature_points'.tr(),
+                    value: _showFeaturePoints,
+                    onChanged: (value) {
+                      setState(() => _showFeaturePoints = value);
+                      _updateSessionSettings();
+                    }),
                 SizedBox(height: 8.h),
-                Text('${'surface_scan_planes'.tr()}: $_planeCount', style: TextStyle(color: Colors.white70, fontSize: 12.sp)),
+                Text('${'surface_scan_planes'.tr()}: $_planeCount',
+                    style: TextStyle(color: Colors.white70, fontSize: 12.sp)),
               ],
             ),
           ),
@@ -439,7 +609,10 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
                         _buildSettingsButton(),
                         if (_capturedFrames.isNotEmpty) ...[
                           SizedBox(width: 14.w),
-                          _buildCircleButtonMini(icon: Icons.refresh_rounded, onPressed: _resetScan, tooltip: 'surface_scan_reset'.tr()),
+                          _buildCircleButtonMini(
+                              icon: Icons.refresh_rounded,
+                              onPressed: _resetScan,
+                              tooltip: 'surface_scan_reset'.tr()),
                         ],
                       ],
                     ),
@@ -453,8 +626,17 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
                   bottom: 0,
                   child: TextButton(
                     onPressed: _isMerging ? null : _mergeAndOpenReport,
-                    style: TextButton.styleFrom(backgroundColor: Colors.greenAccent, foregroundColor: Colors.black, padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 10.h), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18.r))),
-                    child: Text(_isMerging ? 'merging'.tr() : 'surface_scan_merge'.tr(), style: TextStyle(fontSize: 11.sp, fontWeight: FontWeight.w900)),
+                    style: TextButton.styleFrom(
+                        backgroundColor: Colors.greenAccent,
+                        foregroundColor: Colors.black,
+                        padding: EdgeInsets.symmetric(
+                            horizontal: 16.w, vertical: 10.h),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(18.r))),
+                    child: Text(
+                        _isMerging ? 'merging'.tr() : 'surface_scan_merge'.tr(),
+                        style: TextStyle(
+                            fontSize: 11.sp, fontWeight: FontWeight.w900)),
                   ),
                 ),
             ],
@@ -472,7 +654,11 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
     final canLock = _stage == _SurfaceScanStage.detected;
     final canCapture = _stage == _SurfaceScanStage.locked && _hasLockedSurface;
     final isEnabled = canLock || canCapture;
-    final onTap = canLock ? _lockSurface : canCapture && !_isCapturing ? _takeSnapshot : null;
+    final onTap = canLock
+        ? _lockSurface
+        : canCapture && !_isCapturing
+            ? _takeSnapshot
+            : null;
     return GestureDetector(
       onTap: isEnabled ? onTap : null,
       child: AnimatedOpacity(
@@ -482,16 +668,32 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
           duration: const Duration(milliseconds: 160),
           width: 74.r,
           height: 74.r,
-          decoration: BoxDecoration(color: Colors.black.withOpacity(0.26), shape: BoxShape.circle, border: Border.all(color: isEnabled ? Colors.white : Colors.white54, width: 3.r)),
+          decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.26),
+              shape: BoxShape.circle,
+              border: Border.all(
+                  color: isEnabled ? Colors.white : Colors.white54,
+                  width: 3.r)),
           child: Center(
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 160),
               width: 52.r,
               height: 52.r,
-              decoration: BoxDecoration(color: _isCapturing || _isCropping ? Colors.grey : Colors.white, shape: BoxShape.circle),
+              decoration: BoxDecoration(
+                  color:
+                      _isCapturing || _isCropping ? Colors.grey : Colors.white,
+                  shape: BoxShape.circle),
               child: _isCapturing || _isCropping
-                  ? Padding(padding: EdgeInsets.all(13.r), child: CircularProgressIndicator(strokeWidth: 2.5.r, color: Colors.black))
-                  : Icon(canLock ? Icons.lock_outline_rounded : Icons.camera_alt_rounded, color: Colors.black, size: 28.r),
+                  ? Padding(
+                      padding: EdgeInsets.all(13.r),
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2.5.r, color: Colors.black))
+                  : Icon(
+                      canLock
+                          ? Icons.lock_outline_rounded
+                          : Icons.camera_alt_rounded,
+                      color: Colors.black,
+                      size: 28.r),
             ),
           ),
         ),
@@ -504,9 +706,17 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(width: 42.r, height: 42.r, decoration: BoxDecoration(color: Colors.black.withOpacity(0.36), shape: BoxShape.circle, border: Border.all(color: Colors.white.withOpacity(0.22))), child: Icon(Icons.settings, color: Colors.white, size: 22.r)),
+            Container(
+                width: 42.r,
+                height: 42.r,
+                decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.36),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white.withOpacity(0.22))),
+                child: Icon(Icons.settings, color: Colors.white, size: 22.r)),
             SizedBox(height: 4.h),
-            Text('surface_scan_settings'.tr(), style: TextStyle(color: Colors.white, fontSize: 12.sp)),
+            Text('surface_scan_settings'.tr(),
+                style: TextStyle(color: Colors.white, fontSize: 12.sp)),
           ],
         ),
       );
@@ -537,46 +747,114 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
           filter: ui.ImageFilter.blur(sigmaX: 8, sigmaY: 8),
           child: Container(
             padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 7.h),
-            decoration: BoxDecoration(color: Colors.black.withOpacity(0.42), borderRadius: BorderRadius.circular(18.r), border: Border.all(color: Colors.white.withOpacity(0.22))),
-            child: Text('${_capturedFrames.length} | ${(_coverageRatio * 100).round()}%', style: TextStyle(color: Colors.white, fontSize: 14.sp, fontWeight: FontWeight.w800)),
+            decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.42),
+                borderRadius: BorderRadius.circular(18.r),
+                border: Border.all(color: Colors.white.withOpacity(0.22))),
+            child: Text(
+                '${_capturedFrames.length} | ${(_coverageRatio * 100).round()}%',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 14.sp,
+                    fontWeight: FontWeight.w800)),
           ),
         ),
       );
 
-  Widget _buildCircleButton({required IconData icon, required VoidCallback onPressed}) => ClipOval(
+  Widget _buildCircleButton(
+          {required IconData icon, required VoidCallback onPressed}) =>
+      ClipOval(
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-          child: Material(color: Colors.black.withOpacity(0.42), shape: const CircleBorder(), child: IconButton(icon: Icon(icon, color: Colors.white, size: 21.r), onPressed: onPressed)),
+          child: Material(
+              color: Colors.black.withOpacity(0.42),
+              shape: const CircleBorder(),
+              child: IconButton(
+                  icon: Icon(icon, color: Colors.white, size: 21.r),
+                  onPressed: onPressed)),
         ),
       );
 
-  Widget _buildCircleButtonMini({required IconData icon, required VoidCallback onPressed, required String tooltip}) => Tooltip(
+  Widget _buildCircleButtonMini(
+          {required IconData icon,
+          required VoidCallback onPressed,
+          required String tooltip}) =>
+      Tooltip(
         message: tooltip,
         child: GestureDetector(
           onTap: onPressed,
-          child: Container(width: 44.r, height: 44.r, decoration: BoxDecoration(color: Colors.black.withOpacity(0.48), shape: BoxShape.circle, border: Border.all(color: Colors.white24, width: 1.r)), child: Icon(icon, color: Colors.white, size: 20.r)),
+          child: Container(
+              width: 44.r,
+              height: 44.r,
+              decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.48),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white24, width: 1.r)),
+              child: Icon(icon, color: Colors.white, size: 20.r)),
         ),
       );
 
-  Widget _buildSwitchRow({required String label, required bool value, required ValueChanged<bool> onChanged}) => SizedBox(
+  Widget _buildSwitchRow(
+          {required String label,
+          required bool value,
+          required ValueChanged<bool> onChanged}) =>
+      SizedBox(
         height: 38.h,
-        child: Row(children: [Expanded(child: Text(label, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.white, fontSize: 12.sp))), Switch.adaptive(value: value, onChanged: onChanged, activeColor: Colors.greenAccent)]),
+        child: Row(children: [
+          Expanded(
+              child: Text(label,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: Colors.white, fontSize: 12.sp))),
+          Switch.adaptive(
+              value: value,
+              onChanged: onChanged,
+              activeColor: Colors.greenAccent)
+        ]),
       );
 
   String get _stageLabelKey {
+    if (_scanMode == _SurfaceScanMode.wall &&
+        _stage != _SurfaceScanStage.locked) {
+      return _wallTrackingLabelKey;
+    }
     switch (_stage) {
-      case _SurfaceScanStage.starting: return 'surface_scan_start';
-      case _SurfaceScanStage.scanning: return 'surface_scan_area';
-      case _SurfaceScanStage.detected: return 'surface_scan_lock_surface';
-      case _SurfaceScanStage.locked: return 'surface_scan_surface_locked';
+      case _SurfaceScanStage.starting:
+        return 'surface_scan_start';
+      case _SurfaceScanStage.scanning:
+        return 'surface_scan_area';
+      case _SurfaceScanStage.detected:
+        return 'surface_scan_lock_surface';
+      case _SurfaceScanStage.locked:
+        return 'surface_scan_surface_locked';
     }
   }
 
-  void _onARViewCreated(ARSessionManager arSessionManager, ARObjectManager arObjectManager, ARAnchorManager arAnchorManager, ARLocationManager arLocationManager) {
+  String get _wallTrackingLabelKey {
+    switch (_wallTrackingState) {
+      case _WallSurfaceTrackingState.searching:
+        return 'surface_scan_wall_searching';
+      case _WallSurfaceTrackingState.preview:
+        return 'surface_scan_wall_preview';
+      case _WallSurfaceTrackingState.stable:
+        return 'surface_scan_wall_stable';
+      case _WallSurfaceTrackingState.lost:
+        return 'surface_scan_wall_lost';
+      case _WallSurfaceTrackingState.locked:
+        return 'surface_scan_surface_locked';
+    }
+  }
+
+  void _onARViewCreated(
+      ARSessionManager arSessionManager,
+      ARObjectManager arObjectManager,
+      ARAnchorManager arAnchorManager,
+      ARLocationManager arLocationManager) {
     _arSessionManager = arSessionManager;
     arSessionManager.onError = _handleArError;
     arSessionManager.onPlaneDetected = _handlePlaneDetected;
     arSessionManager.onSessionReady = _handleArSessionReady;
+    arSessionManager.onSurfaceStateChanged = _handleWallSurfaceState;
     _updateSessionSettings();
     arObjectManager.onInitialize();
     if (defaultTargetPlatform == TargetPlatform.iOS) _handleArSessionReady();
@@ -584,18 +862,63 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
 
   void _handleArSessionReady() {
     if (!mounted || _isInitialized) return;
-    setState(() { _isInitialized = true; _stage = _SurfaceScanStage.scanning; });
+    setState(() {
+      _isInitialized = true;
+      _stage = _SurfaceScanStage.scanning;
+    });
   }
 
-  void _handleArError(String message) { if (mounted) _showRawSnack(message); }
+  void _handleArError(String message) {
+    if (mounted) _showRawSnack(message);
+  }
 
   void _handlePlaneDetected(int planeCount) {
-    if (!mounted || planeCount <= 0 || _stage == _SurfaceScanStage.locked) return;
-    final shouldTransition = _stage == _SurfaceScanStage.starting || _stage == _SurfaceScanStage.scanning;
+    if (!mounted ||
+        _scanMode == _SurfaceScanMode.wall ||
+        planeCount <= 0 ||
+        _stage == _SurfaceScanStage.locked) return;
+    final shouldTransition = _stage == _SurfaceScanStage.starting ||
+        _stage == _SurfaceScanStage.scanning;
     if (_planeCount != planeCount || shouldTransition) {
-      setState(() { _planeCount = planeCount; if (shouldTransition) _stage = _SurfaceScanStage.detected; });
+      setState(() {
+        _planeCount = planeCount;
+        if (shouldTransition) _stage = _SurfaceScanStage.detected;
+      });
     }
     if (_showPlanes) _arSessionManager?.showPlanes(true);
+  }
+
+  void _handleWallSurfaceState(String rawState) {
+    if (!mounted || _scanMode != _SurfaceScanMode.wall) return;
+    final next = _WallSurfaceTrackingState.fromWireValue(rawState);
+    if (next == _wallTrackingState &&
+        !(_stage == _SurfaceScanStage.detected &&
+            next != _WallSurfaceTrackingState.stable)) {
+      return;
+    }
+    setState(() {
+      _wallTrackingState = next;
+      _planeCount = next == _WallSurfaceTrackingState.stable ||
+              next == _WallSurfaceTrackingState.locked
+          ? 1
+          : 0;
+      if (_stage != _SurfaceScanStage.locked) {
+        _stage = next == _WallSurfaceTrackingState.stable
+            ? _SurfaceScanStage.detected
+            : _SurfaceScanStage.scanning;
+      }
+    });
+    if (_showPlanes) _arSessionManager?.showPlanes(true);
+  }
+
+  Future<void> _changeScanMode(_SurfaceScanMode mode) async {
+    if (mode == _scanMode) return;
+    setState(() {
+      _scanMode = mode;
+      _wallTrackingState = _WallSurfaceTrackingState.searching;
+    });
+    _resetScan();
+    await _arSessionManager?.setSurfaceScanMode(mode.wireValue);
   }
 
   Future<void> _lockSurface() async {
@@ -603,13 +926,22 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
     if (manager == null || _stage != _SurfaceScanStage.detected) return;
     final hits = await _hitTestPlaneQuad(manager, _captureProbePoints);
     if (!mounted) return;
-    if (hits == null || hits.length != 4 || !_setSurfaceBasisFromHits(hits)) { _showSnack('surface_scan_lock_failed'); return; }
+    if (hits == null || hits.length != 4 || !_setSurfaceBasisFromHits(hits)) {
+      _showSnack('surface_scan_lock_failed');
+      return;
+    }
     final lockedPlanePoints = _surfacePlanePointsFromHits(hits);
     if (lockedPlanePoints != null) {
       _knownSurfaceBounds = _surfaceBoundsFromPlanePoints(lockedPlanePoints);
       _coverageRatio = _calculateCoverageRatio(_knownSurfaceBounds);
     }
-    setState(() { _stage = _SurfaceScanStage.locked; _showPlanes = true; });
+    setState(() {
+      _stage = _SurfaceScanStage.locked;
+      _showPlanes = true;
+      if (_scanMode == _SurfaceScanMode.wall) {
+        _wallTrackingState = _WallSurfaceTrackingState.locked;
+      }
+    });
     manager.showPlanes(true);
     await _setPlaneDetectionEnabled(manager, false);
     _startSurfacePreviewTracking();
@@ -627,7 +959,6 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
     return true;
   }
 
-
   Future<List<vmath.Matrix4>?> _hitTestPlaneQuad(
     ARSessionManager manager,
     List<Offset> normalizedPoints,
@@ -636,7 +967,8 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
       final dynamic dynamicManager = manager;
       final hits = await dynamicManager.hitTestPlaneQuad(normalizedPoints);
       if (hits is List<vmath.Matrix4>) return hits;
-      if (hits is List) return hits.whereType<vmath.Matrix4>().toList(growable: false);
+      if (hits is List)
+        return hits.whereType<vmath.Matrix4>().toList(growable: false);
       return null;
     } catch (e) {
       debugPrint('Surface hit test quad error: $e');
@@ -644,7 +976,8 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
     }
   }
 
-  Future<void> _setPlaneDetectionEnabled(ARSessionManager manager, bool enabled) async {
+  Future<void> _setPlaneDetectionEnabled(
+      ARSessionManager manager, bool enabled) async {
     try {
       final dynamic dynamicManager = manager;
       await dynamicManager.setPlaneDetectionEnabled(enabled);
@@ -657,7 +990,8 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
     final origin = _surfaceOrigin;
     final axisX = _surfaceAxisX;
     final axisY = _surfaceAxisY;
-    if (hits.length != 4 || origin == null || axisX == null || axisY == null) return null;
+    if (hits.length != 4 || origin == null || axisX == null || axisY == null)
+      return null;
     final points = <double>[];
     for (final hit in hits) {
       final delta = hit.getTranslation() - origin;
@@ -667,7 +1001,8 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
     return points;
   }
 
-  Future<_SurfaceCaptureGeometry?> _hitTestPlaneViewport(ARSessionManager manager) async {
+  Future<_SurfaceCaptureGeometry?> _hitTestPlaneViewport(
+      ARSessionManager manager) async {
     try {
       final dynamic dynamicManager = manager;
       final result = await dynamicManager.hitTestPlaneViewport(
@@ -700,7 +1035,8 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
               : const <vmath.Matrix4>[];
       final planePoints = _surfacePlanePointsFromHits(hits);
       if (planePoints == null) return null;
-      return _SurfaceCaptureGeometry(normalizedRect: _clampNormalizedRect(rect), planePoints: planePoints);
+      return _SurfaceCaptureGeometry(
+          normalizedRect: _clampNormalizedRect(rect), planePoints: planePoints);
     } catch (e) {
       debugPrint('Surface viewport hit test error: $e');
       return null;
@@ -719,13 +1055,15 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
       if (hits == null || hits.length != 4) continue;
       final planePoints = _surfacePlanePointsFromHits(hits);
       if (planePoints != null) {
-        return _SurfaceCaptureGeometry(normalizedRect: rect, planePoints: planePoints);
+        return _SurfaceCaptureGeometry(
+            normalizedRect: rect, planePoints: planePoints);
       }
     }
     return null;
   }
 
-  void _rememberVisibleGeometry(_SurfaceCaptureGeometry geometry, {bool updateState = true}) {
+  void _rememberVisibleGeometry(_SurfaceCaptureGeometry geometry,
+      {bool updateState = true}) {
     final bounds = geometry.surfaceBounds;
     if (bounds.width <= 0 || bounds.height <= 0) return;
 
@@ -744,7 +1082,8 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
   }
 
   Rect _mergeSurfaceBounds(Rect? current, Rect next) {
-    if (current == null || current.width <= 0 || current.height <= 0) return next;
+    if (current == null || current.width <= 0 || current.height <= 0)
+      return next;
     return Rect.fromLTRB(
       math.min(current.left, next.left),
       math.min(current.top, next.top),
@@ -755,8 +1094,18 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
 
   Rect _surfaceBoundsFromPlanePoints(List<double> planePoints) {
     if (planePoints.length != 8) return Rect.zero;
-    final xs = <double>[planePoints[0], planePoints[2], planePoints[4], planePoints[6]];
-    final ys = <double>[planePoints[1], planePoints[3], planePoints[5], planePoints[7]];
+    final xs = <double>[
+      planePoints[0],
+      planePoints[2],
+      planePoints[4],
+      planePoints[6]
+    ];
+    final ys = <double>[
+      planePoints[1],
+      planePoints[3],
+      planePoints[5],
+      planePoints[7]
+    ];
     return Rect.fromLTRB(
       xs.reduce(math.min),
       ys.reduce(math.min),
@@ -828,7 +1177,6 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
       final geometry = await _currentCaptureGeometry();
       if (!mounted || _stage != _SurfaceScanStage.locked) return;
       if (geometry == null) {
-        if (_latestSurfaceGeometry != null) setState(() => _latestSurfaceGeometry = null);
         return;
       }
 
@@ -846,9 +1194,14 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
     if (manager == null || _stage != _SurfaceScanStage.locked) return false;
     if (_isCapturing || _isCropping || _isMerging) return false;
 
-    setState(() { _isCapturing = true; if (showFlash) _showFlash = true; });
+    setState(() {
+      _isCapturing = true;
+      if (showFlash) _showFlash = true;
+    });
     if (showFlash) {
-      Timer(const Duration(milliseconds: 110), () { if (mounted) setState(() => _showFlash = false); });
+      Timer(const Duration(milliseconds: 110), () {
+        if (mounted) setState(() => _showFlash = false);
+      });
     }
 
     final shouldRestorePlanes = _showPlanes;
@@ -871,7 +1224,8 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
 
       final originalBytes = await _imageProviderToPngBytes(imageProvider);
       final rect = geometry.normalizedRect;
-      final croppedBytes = await compute(_cropSurfaceSnapshotInBackground, <String, Object>{
+      final croppedBytes =
+          await compute(_cropSurfaceSnapshotInBackground, <String, Object>{
         'bytes': originalBytes,
         'left': rect.left,
         'top': rect.top,
@@ -905,16 +1259,27 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
       if (planesHidden && mounted && _stage == _SurfaceScanStage.locked) {
         manager.showPlanes(true);
       }
-      if (mounted) setState(() { _isCapturing = false; _isCropping = false; _showFlash = false; });
+      if (mounted)
+        setState(() {
+          _isCapturing = false;
+          _isCropping = false;
+          _showFlash = false;
+        });
     }
   }
 
   Future<void> _takeSnapshot() async {
     final manager = _arSessionManager;
-    if (manager == null || _stage != _SurfaceScanStage.locked) { _showSnack('surface_scan_detect_first'); return; }
+    if (manager == null || _stage != _SurfaceScanStage.locked) {
+      _showSnack('surface_scan_detect_first');
+      return;
+    }
     if (_isCapturing || _isCropping || _isMerging) return;
     final geometry = await _currentCaptureGeometry();
-    if (geometry == null) { if (mounted) _showSnack('surface_scan_keep_surface_in_view'); return; }
+    if (geometry == null) {
+      if (mounted) _showSnack('surface_scan_keep_surface_in_view');
+      return;
+    }
     _rememberVisibleGeometry(geometry);
     await _captureGeometrySnapshot(geometry);
   }
@@ -922,7 +1287,9 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
   void _resetScan() {
     _detectedTimer?.cancel();
     _stopSurfacePreviewTracking();
-    try { PanoramaStitcher.clearSurface(); } catch (_) {}
+    try {
+      PanoramaStitcher.clearSurface();
+    } catch (_) {}
     setState(() {
       _capturedFrames.clear();
       _surfaceOrigin = null;
@@ -934,8 +1301,11 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
       _latestSurfaceGeometry = null;
       _coverageRatio = 0.0;
       _planeCount = 0;
+      _wallTrackingState = _WallSurfaceTrackingState.searching;
       _showPlanes = true;
-      _stage = _isInitialized ? _SurfaceScanStage.scanning : _SurfaceScanStage.starting;
+      _stage = _isInitialized
+          ? _SurfaceScanStage.scanning
+          : _SurfaceScanStage.starting;
     });
     final manager = _arSessionManager;
     if (manager != null) {
@@ -951,9 +1321,13 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
     setState(() => _isMerging = true);
     try {
       final frames = List<_CapturedSurfaceFrame>.unmodifiable(_capturedFrames);
-      final merged = await _composeSurfaceWithOpenCv(frames) ?? await _stitchFramesSideBySide(frames);
+      final merged = await _composeSurfaceWithOpenCv(frames) ??
+          await _stitchFramesSideBySide(frames);
       if (!mounted) return;
-      if (merged == null || merged.isEmpty) { _showSnack('merge_failed'); return; }
+      if (merged == null || merged.isEmpty) {
+        _showSnack('merge_failed');
+        return;
+      }
       await _openReport(merged);
     } catch (e) {
       debugPrint('Surface merge/open error: $e');
@@ -970,7 +1344,12 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
     if (_capturedFrames.isEmpty) return;
     _stopSurfacePreviewTracking();
     _arSessionManager?.disableCamera();
-    await Navigator.push(context, MaterialPageRoute(builder: (_) => _SurfaceScanReportScreen(frames: List.unmodifiable(_capturedFrames), mergedImageBytes: mergedImageBytes)));
+    await Navigator.push(
+        context,
+        MaterialPageRoute(
+            builder: (_) => _SurfaceScanReportScreen(
+                frames: List.unmodifiable(_capturedFrames),
+                mergedImageBytes: mergedImageBytes)));
     _arSessionManager?.enableCamera();
   }
 
@@ -981,7 +1360,8 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
     manager.onInitialize(
       showAnimatedGuide: false,
       showFeaturePoints: _showFeaturePoints,
-      showPlanes: _showPlanes && _planeCount > 0,
+      showPlanes: _showPlanes &&
+          (_scanMode == _SurfaceScanMode.wall || _planeCount > 0),
       customPlaneTexturePath: _planeTexturePath,
       showWorldOrigin: false,
       handleTaps: false,
@@ -996,21 +1376,59 @@ class _SurfaceScanScreenState extends State<SurfaceScanScreen> {
 
   void _showRawSnack(String message) {
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message), backgroundColor: Colors.black87, behavior: SnackBarBehavior.floating));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.black87,
+        behavior: SnackBarBehavior.floating));
   }
 }
 
 enum _SurfaceScanStage { starting, scanning, detected, locked }
 
+enum _SurfaceScanMode {
+  shelf('shelf', 'surface_scan_mode_shelf'),
+  wall('wall', 'surface_scan_mode_wall');
+
+  const _SurfaceScanMode(this.wireValue, this.labelKey);
+  final String wireValue;
+  final String labelKey;
+}
+
+enum _WallSurfaceTrackingState {
+  searching,
+  preview,
+  stable,
+  lost,
+  locked;
+
+  factory _WallSurfaceTrackingState.fromWireValue(String value) {
+    return _WallSurfaceTrackingState.values.firstWhere(
+      (state) => state.name == value,
+      orElse: () => _WallSurfaceTrackingState.searching,
+    );
+  }
+}
+
 class _SurfaceCaptureGeometry {
-  const _SurfaceCaptureGeometry({required this.normalizedRect, required this.planePoints});
+  const _SurfaceCaptureGeometry(
+      {required this.normalizedRect, required this.planePoints});
   final Rect normalizedRect;
   final List<double> planePoints;
 
   Rect get surfaceBounds {
     if (planePoints.length != 8) return Rect.zero;
-    final xs = <double>[planePoints[0], planePoints[2], planePoints[4], planePoints[6]];
-    final ys = <double>[planePoints[1], planePoints[3], planePoints[5], planePoints[7]];
+    final xs = <double>[
+      planePoints[0],
+      planePoints[2],
+      planePoints[4],
+      planePoints[6]
+    ];
+    final ys = <double>[
+      planePoints[1],
+      planePoints[3],
+      planePoints[5],
+      planePoints[7]
+    ];
     return Rect.fromLTRB(
       xs.reduce(math.min),
       ys.reduce(math.min),
@@ -1061,7 +1479,8 @@ class _SurfaceCoveragePainter extends CustomPainter {
     for (final covered in coveredRects) {
       final intersection = covered.intersect(visibleSurface);
       if (intersection.width <= 0 || intersection.height <= 0) continue;
-      final screenRect = _mapSurfaceRectToScreen(intersection, visibleSurface, visibleScreen);
+      final screenRect =
+          _mapSurfaceRectToScreen(intersection, visibleSurface, visibleScreen);
       canvas.drawRect(screenRect, fillPaint);
       canvas.drawRect(screenRect, edgePaint);
     }
@@ -1072,21 +1491,32 @@ class _SurfaceCoveragePainter extends CustomPainter {
     final progress = coverageRatio.clamp(0.0, 1.0).toDouble();
     if (progress > 0) {
       final barBackground = RRect.fromRectAndRadius(
-        Rect.fromLTWH(visibleScreen.left, visibleScreen.bottom + 5, visibleScreen.width, 4),
+        Rect.fromLTWH(visibleScreen.left, visibleScreen.bottom + 5,
+            visibleScreen.width, 4),
         const Radius.circular(2),
       );
       final barFill = RRect.fromRectAndRadius(
-        Rect.fromLTWH(visibleScreen.left, visibleScreen.bottom + 5, visibleScreen.width * progress, 4),
+        Rect.fromLTWH(visibleScreen.left, visibleScreen.bottom + 5,
+            visibleScreen.width * progress, 4),
         const Radius.circular(2),
       );
-      canvas.drawRRect(barBackground, Paint()..color = Colors.black.withOpacity(0.35));
-      canvas.drawRRect(barFill, Paint()..color = Colors.greenAccent.withOpacity(0.90));
+      canvas.drawRRect(
+          barBackground, Paint()..color = Colors.black.withOpacity(0.35));
+      canvas.drawRRect(
+          barFill, Paint()..color = Colors.greenAccent.withOpacity(0.90));
     }
   }
 
-  Rect _mapSurfaceRectToScreen(Rect surfaceRect, Rect visibleSurface, Rect visibleScreen) {
-    double mapX(double x) => visibleScreen.left + ((x - visibleSurface.left) / visibleSurface.width) * visibleScreen.width;
-    double mapY(double y) => visibleScreen.top + ((y - visibleSurface.top) / visibleSurface.height) * visibleScreen.height;
+  Rect _mapSurfaceRectToScreen(
+      Rect surfaceRect, Rect visibleSurface, Rect visibleScreen) {
+    double mapX(double x) =>
+        visibleScreen.left +
+        ((x - visibleSurface.left) / visibleSurface.width) *
+            visibleScreen.width;
+    double mapY(double y) =>
+        visibleScreen.top +
+        ((y - visibleSurface.top) / visibleSurface.height) *
+            visibleScreen.height;
     return Rect.fromLTRB(
       mapX(surfaceRect.left),
       mapY(surfaceRect.top),
@@ -1104,7 +1534,11 @@ class _SurfaceCoveragePainter extends CustomPainter {
 }
 
 class _CapturedSurfaceFrame {
-  const _CapturedSurfaceFrame({required this.index, required this.croppedBytes, required this.imageProvider, required this.planePoints});
+  const _CapturedSurfaceFrame(
+      {required this.index,
+      required this.croppedBytes,
+      required this.imageProvider,
+      required this.planePoints});
   final int index;
   final Uint8List croppedBytes;
   final ImageProvider<Object> imageProvider;
@@ -1112,12 +1546,14 @@ class _CapturedSurfaceFrame {
 }
 
 class _SurfaceScanReportScreen extends StatefulWidget {
-  const _SurfaceScanReportScreen({required this.frames, required this.mergedImageBytes});
+  const _SurfaceScanReportScreen(
+      {required this.frames, required this.mergedImageBytes});
   final List<_CapturedSurfaceFrame> frames;
   final Uint8List mergedImageBytes;
 
   @override
-  State<_SurfaceScanReportScreen> createState() => _SurfaceScanReportScreenState();
+  State<_SurfaceScanReportScreen> createState() =>
+      _SurfaceScanReportScreenState();
 }
 
 class _SurfaceScanReportScreenState extends State<_SurfaceScanReportScreen> {
@@ -1129,19 +1565,28 @@ class _SurfaceScanReportScreenState extends State<_SurfaceScanReportScreen> {
     setState(() => _isSaving = true);
     try {
       final outputDir = await getApplicationDocumentsDirectory();
-      final file = File('${outputDir.path}/surface_scan_${DateTime.now().millisecondsSinceEpoch}.${_encodedImageExtension(widget.mergedImageBytes)}');
+      final file = File(
+          '${outputDir.path}/surface_scan_${DateTime.now().millisecondsSinceEpoch}.${_encodedImageExtension(widget.mergedImageBytes)}');
       await file.writeAsBytes(widget.mergedImageBytes);
       final box = Hive.box<String>('photosBox');
       await box.add(file.path);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('saved'.tr()), backgroundColor: Colors.green.shade800, behavior: SnackBarBehavior.floating));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('saved'.tr()),
+            backgroundColor: Colors.green.shade800,
+            behavior: SnackBarBehavior.floating));
       }
     } catch (e) {
       debugPrint('Save error: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('surface_scan_capture_failed'.tr()), backgroundColor: Colors.red.shade800, behavior: SnackBarBehavior.floating));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('surface_scan_capture_failed'.tr()),
+            backgroundColor: Colors.red.shade800,
+            behavior: SnackBarBehavior.floating));
       }
-    } finally { if (mounted) setState(() => _isSaving = false); }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
   }
 
   @override
@@ -1157,9 +1602,19 @@ class _SurfaceScanReportScreenState extends State<_SurfaceScanReportScreen> {
         elevation: 0,
         actions: [
           if (_isSaving)
-            const Padding(padding: EdgeInsets.symmetric(horizontal: 16), child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))))
+            const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16),
+                child: Center(
+                    child: SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                            color: Colors.white, strokeWidth: 2))))
           else
-            IconButton(icon: const Icon(Icons.save_alt_rounded), onPressed: _saveMergedImage, tooltip: 'save'.tr()),
+            IconButton(
+                icon: const Icon(Icons.save_alt_rounded),
+                onPressed: _saveMergedImage,
+                tooltip: 'save'.tr()),
         ],
       ),
       body: SafeArea(
@@ -1171,8 +1626,12 @@ class _SurfaceScanReportScreenState extends State<_SurfaceScanReportScreen> {
                   minScale: 1,
                   maxScale: 4,
                   child: _selectedIndex == -1
-                      ? Image.memory(widget.mergedImageBytes, fit: BoxFit.contain, width: double.infinity)
-                      : Image(image: frames[_selectedIndex].imageProvider, fit: BoxFit.contain, width: double.infinity),
+                      ? Image.memory(widget.mergedImageBytes,
+                          fit: BoxFit.contain, width: double.infinity)
+                      : Image(
+                          image: frames[_selectedIndex].imageProvider,
+                          fit: BoxFit.contain,
+                          width: double.infinity),
                 ),
               ),
             ),
@@ -1192,25 +1651,48 @@ class _SurfaceScanReportScreenState extends State<_SurfaceScanReportScreen> {
           itemCount: frames.length + 1,
           itemBuilder: (context, index) {
             final isMergedThumbnail = index == 0;
-            final selected = isMergedThumbnail ? _selectedIndex == -1 : (index - 1) == _selectedIndex;
+            final selected = isMergedThumbnail
+                ? _selectedIndex == -1
+                : (index - 1) == _selectedIndex;
             return GestureDetector(
-              onTap: () => setState(() => _selectedIndex = isMergedThumbnail ? -1 : index - 1),
+              onTap: () => setState(
+                  () => _selectedIndex = isMergedThumbnail ? -1 : index - 1),
               child: Container(
                 margin: EdgeInsets.only(right: 10.w),
                 width: 68.w,
-                decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(8.r), border: Border.all(color: selected ? Colors.greenAccent : Colors.white24, width: selected ? 2.r : 1.r)),
+                decoration: BoxDecoration(
+                    color: Colors.black,
+                    borderRadius: BorderRadius.circular(8.r),
+                    border: Border.all(
+                        color: selected ? Colors.greenAccent : Colors.white24,
+                        width: selected ? 2.r : 1.r)),
                 clipBehavior: Clip.antiAlias,
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    if (isMergedThumbnail) Image.memory(widget.mergedImageBytes, fit: BoxFit.cover) else Image(image: frames[index - 1].imageProvider, fit: BoxFit.cover),
+                    if (isMergedThumbnail)
+                      Image.memory(widget.mergedImageBytes, fit: BoxFit.cover)
+                    else
+                      Image(
+                          image: frames[index - 1].imageProvider,
+                          fit: BoxFit.cover),
                     Align(
                       alignment: Alignment.bottomCenter,
                       child: Container(
                         width: double.infinity,
                         padding: EdgeInsets.symmetric(vertical: 3.h),
                         color: Colors.black.withOpacity(0.62),
-                        child: Text(isMergedThumbnail ? 'surface_scan_preview'.tr() : '${frames[index - 1].index}', textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.white, fontSize: 10.sp, fontWeight: FontWeight.w800)),
+                        child: Text(
+                            isMergedThumbnail
+                                ? 'surface_scan_preview'.tr()
+                                : '${frames[index - 1].index}',
+                            textAlign: TextAlign.center,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 10.sp,
+                                fontWeight: FontWeight.w800)),
                       ),
                     ),
                   ],

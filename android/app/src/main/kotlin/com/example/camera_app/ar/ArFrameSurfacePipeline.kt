@@ -11,6 +11,7 @@ import android.os.SystemClock
 internal data class ArFrameUpdate(
     val timestamp: Long,
     val detectedSurfaceCount: Int,
+    val surfaceState: String? = null,
 )
 
 internal class ArFrameSurfacePipeline {
@@ -20,6 +21,7 @@ internal class ArFrameSurfacePipeline {
     private val depthSurfaceTracker = DepthSurfaceTracker()
     private val surfaceHitTester = ArSurfaceHitTester()
     private val activePlaneSelector = ArActivePlaneSelector()
+    private val wallSurfaceTracker = WallSurfaceTracker()
 
     private var latestFrame: com.google.ar.core.Frame? = null
     private var latestDepthSurface: DepthSurface? = null
@@ -27,6 +29,7 @@ internal class ArFrameSurfacePipeline {
     private var lastDepthSurfaceAtMs = 0L
     private var depthDetectionStreak = 0
     private var selectedPlane: Plane? = null
+    private var scanMode = ArSurfaceScanMode.SHELF
     @Volatile private var surfaceWidth = 0
     @Volatile private var surfaceHeight = 0
 
@@ -60,6 +63,9 @@ internal class ArFrameSurfacePipeline {
         backgroundRenderer.draw(frame)
         val trackedPlanes = session.getAllTrackables(Plane::class.java)
             .filter { it.trackingState == TrackingState.TRACKING && it.subsumedBy == null }
+        if (scanMode == ArSurfaceScanMode.WALL) {
+            return drawWallFrame(frame, trackedPlanes, showPlanes)
+        }
         updateDepthSurface(frame, depthSupported)
         val activePlane = activePlaneSelector.select(
             frame,
@@ -96,6 +102,7 @@ internal class ArFrameSurfacePipeline {
     fun hitTestPlaneQuad(points: List<Map<String, Any>>): ArrayList<DoubleArray>? {
         val frame = latestFrame ?: return null
         if (points.isEmpty()) return null
+        if (scanMode == ArSurfaceScanMode.WALL) return hitTestWallQuad(frame, points)
         val targetPlane = selectedPlane
         if (targetPlane == null && activePlaneSelector.holdsSelection) return null
         val planeHits = surfaceHitTester.hitTestPlaneQuad(
@@ -118,6 +125,22 @@ internal class ArFrameSurfacePipeline {
         marginY: Float,
     ): HashMap<String, Any>? {
         val frame = latestFrame ?: return null
+        if (scanMode == ArSurfaceScanMode.WALL) {
+            val targetPlane = selectedPlane
+            val planeResult = surfaceHitTester.hitTestPlaneViewport(
+                frame,
+                surfaceWidth,
+                surfaceHeight,
+                columns,
+                rows,
+                marginX,
+                marginY,
+                targetPlane,
+            )
+            if (planeResult != null) return planeResult
+            return wallSurfaceTracker.visibleSurface(frame.camera, surfaceWidth, surfaceHeight)
+                ?.let(::serializeDepthSurface)
+        }
         val targetPlane = selectedPlane
         if (targetPlane == null && activePlaneSelector.holdsSelection) return null
         val planeResult = surfaceHitTester.hitTestPlaneViewport(
@@ -145,8 +168,21 @@ internal class ArFrameSurfacePipeline {
             .map(::serializeHit)
     }
 
-    fun setDepthLocked(locked: Boolean) {
-        depthSurfaceTracker.setLocked(locked)
+    fun setSurfaceLocked(session: Session, locked: Boolean) {
+        if (scanMode == ArSurfaceScanMode.WALL) {
+            if (locked) wallSurfaceTracker.lock(session) else wallSurfaceTracker.unlock()
+        } else {
+            depthSurfaceTracker.setLocked(locked)
+        }
+    }
+
+    fun setScanMode(mode: ArSurfaceScanMode) {
+        if (scanMode == mode) {
+            reset()
+            return
+        }
+        scanMode = mode
+        reset()
     }
 
     fun restartPlaneSelection() {
@@ -163,6 +199,51 @@ internal class ArFrameSurfacePipeline {
         selectedPlane = null
         depthSurfaceTracker.reset()
         activePlaneSelector.reset()
+        wallSurfaceTracker.reset()
+    }
+
+    private fun drawWallFrame(
+        frame: com.google.ar.core.Frame,
+        trackedPlanes: List<Plane>,
+        showPlanes: Boolean,
+    ): ArFrameUpdate {
+        val now = SystemClock.elapsedRealtime()
+        var update = wallSurfaceTracker.update(frame, surfaceWidth, surfaceHeight, now)
+        val verticalPlanes = trackedPlanes.filter { it.type == Plane.Type.VERTICAL }
+        val activePlane = activePlaneSelector.select(
+            frame,
+            verticalPlanes,
+            surfaceWidth,
+            surfaceHeight,
+            now,
+        )
+        selectedPlane = activePlane
+        if (activePlane != null) update = wallSurfaceTracker.observePlane(activePlane, now)
+        if (showPlanes) {
+            update.surface?.let { depthSurfaceRenderer.draw(frame.camera, it, update.state) }
+        }
+        val detected = if (
+            update.state == WallSurfaceState.STABLE || update.state == WallSurfaceState.LOCKED
+        ) 1 else 0
+        return ArFrameUpdate(frame.timestamp, detected, update.state.wireValue)
+    }
+
+    private fun hitTestWallQuad(
+        frame: com.google.ar.core.Frame,
+        points: List<Map<String, Any>>,
+    ): ArrayList<DoubleArray>? {
+        val planeHits = surfaceHitTester.hitTestPlaneQuad(
+            frame,
+            surfaceWidth,
+            surfaceHeight,
+            points,
+            selectedPlane,
+        )
+        if (planeHits != null) return planeHits
+        val update = wallSurfaceTracker.renderUpdate(SystemClock.elapsedRealtime())
+        if (update.state != WallSurfaceState.STABLE && update.state != WallSurfaceState.LOCKED) return null
+        val visible = wallSurfaceTracker.visibleSurface(frame.camera, surfaceWidth, surfaceHeight) ?: return null
+        return ArrayList(visible.corners.map(::serializePose))
     }
 
     private fun serializePose(pose: com.google.ar.core.Pose): DoubleArray {

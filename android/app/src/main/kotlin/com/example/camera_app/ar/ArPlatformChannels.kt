@@ -34,6 +34,7 @@ internal class ArPlatformChannels(
     private val anchorChannel = MethodChannel(messenger, "aranchors_$viewId")
     @Volatile private var lastReportedError: String? = null
     private var lastReportedPlaneCount = -1
+    private var lastReportedSurfaceState: String? = null
 
     init {
         objectChannel.setMethodCallHandler { call, result ->
@@ -77,6 +78,15 @@ internal class ArPlatformChannels(
 
     fun resetPlaneCount() {
         lastReportedPlaneCount = -1
+        lastReportedSurfaceState = null
+    }
+
+    fun reportSurfaceState(state: String?) {
+        if (state == null || state == lastReportedSurfaceState) return
+        lastReportedSurfaceState = state
+        mainHandler.post {
+            if (!isDisposed()) sessionChannel.invokeMethod("onSurfaceStateChanged", state)
+        }
     }
 
     fun reportError(message: String) {
