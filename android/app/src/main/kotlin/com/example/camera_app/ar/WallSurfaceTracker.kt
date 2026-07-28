@@ -131,6 +131,25 @@ internal class WallSurfaceTracker {
         }
 
         val observedPoints = surface.corners.map(Pose::positionVec)
+        if (current.confirmations < STABLE_CONFIRMATIONS &&
+            (stableEvidence || planeChanged(current.plane, surface.plane))
+        ) {
+            if (!isConnected(current, observedPoints)) {
+                if (stableEvidence) {
+                    model = createModel(surface, nowMs, STABLE_CONFIRMATIONS)
+                    cachedSurface = model?.let(::buildSurface)
+                    state = WallSurfaceState.STABLE
+                }
+                return
+            }
+            val confirmations = if (stableEvidence) STABLE_CONFIRMATIONS else 1
+            val rebased = rebaseModel(current, surface, nowMs, confirmations)
+            model = rebased
+            cachedSurface = buildSurface(rebased)
+            state = if (stableEvidence) WallSurfaceState.STABLE else WallSurfaceState.PREVIEW
+            return
+        }
+
         if (!isConnected(current, observedPoints)) {
             if (stableEvidence) {
                 model = createModel(surface, nowMs, STABLE_CONFIRMATIONS)
@@ -197,6 +216,31 @@ internal class WallSurfaceTracker {
         )
     }
 
+    private fun rebaseModel(
+        previous: Model,
+        surface: DepthSurface,
+        nowMs: Long,
+        confirmations: Int,
+    ): Model {
+        val rebased = createModel(surface, nowMs, confirmations)
+        includeBounds(rebased, buildSurface(previous).corners.map(Pose::positionVec))
+        return rebased
+    }
+
+    private fun includeBounds(current: Model, points: List<Vec3>) {
+        if (points.isEmpty()) return
+        val xs = points.map { (it - current.plane.point).dot(current.axisX) }
+        val ys = points.map { (it - current.plane.point).dot(current.axisY) }
+        current.minX = min(current.minX, xs.minOrNull() ?: current.minX)
+            .coerceAtLeast(-MAX_EXTENT_METERS)
+        current.maxX = max(current.maxX, xs.maxOrNull() ?: current.maxX)
+            .coerceAtMost(MAX_EXTENT_METERS)
+        current.minY = min(current.minY, ys.minOrNull() ?: current.minY)
+            .coerceAtLeast(-MAX_EXTENT_METERS)
+        current.maxY = max(current.maxY, ys.maxOrNull() ?: current.maxY)
+            .coerceAtMost(MAX_EXTENT_METERS)
+    }
+
     private fun expandBounds(current: Model, points: List<Vec3>, maxGrowth: Float) {
         val xs = points.map { (it - current.plane.point).dot(current.axisX) }
         val ys = points.map { (it - current.plane.point).dot(current.axisY) }
@@ -250,6 +294,10 @@ internal class WallSurfaceTracker {
         abs(first.normal.dot(second.normal)) >= COMPATIBLE_NORMAL_DOT &&
             abs((second.point - first.point).dot(first.normal)) <= COMPATIBLE_DISTANCE_METERS
 
+    private fun planeChanged(first: DepthPlane, second: DepthPlane): Boolean =
+        abs(first.normal.dot(second.normal)) < REBASE_NORMAL_DOT ||
+            abs((second.point - first.point).dot(first.normal)) > REBASE_DISTANCE_METERS
+
     private fun isConnected(current: Model, points: List<Vec3>): Boolean {
         if (points.isEmpty()) return false
         val xs = points.map { (it - current.plane.point).dot(current.axisX) }
@@ -288,6 +336,8 @@ internal class WallSurfaceTracker {
         const val STABLE_CONFIRMATIONS = 2
         const val COMPATIBLE_NORMAL_DOT = 0.90f
         const val COMPATIBLE_DISTANCE_METERS = 0.15f
+        const val REBASE_NORMAL_DOT = 0.9995f
+        const val REBASE_DISTANCE_METERS = 0.01f
         const val MAX_JOIN_GAP_METERS = 0.28f
         const val EDGE_PADDING_METERS = 0.035f
         const val MIN_INITIAL_SIZE_METERS = 0.16f

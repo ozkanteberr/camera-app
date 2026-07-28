@@ -7,6 +7,7 @@ import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 /** Fits a vertical plane from persistent ARCore feature points near screen center. */
 internal class WallFeaturePointPlaneProvider {
@@ -14,6 +15,13 @@ internal class WallFeaturePointPlaneProvider {
         val id: Int,
         val position: Vec3,
         val lastSeenAtMs: Long,
+        val seenFrames: Int,
+    )
+
+    private data class PlaneFit(
+        val plane: DepthPlane,
+        val inliers: List<TrackedPoint>,
+        val confidence: Float,
     )
 
     private val tracked = LinkedHashMap<Int, TrackedPoint>()
@@ -28,12 +36,21 @@ internal class WallFeaturePointPlaneProvider {
         trimToLimit()
         if (tracked.size < MIN_INLIERS) return rejected("few_feature_points")
         val fit = fitPlane(tracked.values.toList()) ?: return rejected("no_feature_plane")
-        val rect = sampleRect(fit.second, viewProjection(frame.camera))
+        val facing = viewFacing(fit.plane, frame.camera.pose.positionVec())
+        if (facing < MIN_VIEW_FACING) return rejected("feature_plane_grazing")
+        val confidence = (fit.confidence * FIT_CONFIDENCE_WEIGHT +
+            facing * FACING_CONFIDENCE_WEIGHT).coerceIn(0f, 1f)
+        val rect = sampleRect(fit.inliers, viewProjection(frame.camera))
             ?: return rejected("feature_plane_off_center")
-        val surface = geometry.fromViewRect(frame.camera, rect, fit.first)
+        val surface = geometry.fromViewRect(frame.camera, rect, fit.plane)
             ?: return rejected("feature_projection_failed")
-        diagnostic = "accepted:${fit.second.size}"
-        return WallObservation(surface, WallObservationSource.FEATURE_POINTS, nowMs)
+        diagnostic = "accepted:${fit.inliers.size}:q=${(confidence * 100f).toInt()}"
+        return WallObservation(
+            surface,
+            WallObservationSource.FEATURE_POINTS,
+            nowMs,
+            confidence,
+        )
     }
 
     fun reset() {
@@ -64,7 +81,17 @@ internal class WallFeaturePointPlaneProvider {
                     ) {
                         continue
                     }
-                    tracked[id] = TrackedPoint(id, position, nowMs)
+                    val previous = tracked[id]
+                    tracked[id] = if (previous == null) {
+                        TrackedPoint(id, position, nowMs, 1)
+                    } else {
+                        previous.copy(
+                            position = previous.position * POSITION_HISTORY_WEIGHT +
+                                position * POSITION_UPDATE_WEIGHT,
+                            lastSeenAtMs = nowMs,
+                            seenFrames = previous.seenFrames + 1,
+                        )
+                    }
                     accepted++
                 }
             }
@@ -73,7 +100,7 @@ internal class WallFeaturePointPlaneProvider {
         }
     }
 
-    private fun fitPlane(samples: List<TrackedPoint>): Pair<DepthPlane, List<TrackedPoint>>? {
+    private fun fitPlane(samples: List<TrackedPoint>): PlaneFit? {
         val seeds = positionSeeds(samples)
         var bestPoint: Vec3? = null
         var bestNormal = Vec3(0f, 0f, 0f)
@@ -115,8 +142,62 @@ internal class WallFeaturePointPlaneProvider {
         val horizontalSpan = inliers.maxOf { (it.position - plane.point).dot(axisX) } -
             inliers.minOf { (it.position - plane.point).dot(axisX) }
         if (horizontalSpan < MIN_HORIZONTAL_SPAN_METERS) return null
-        return Pair(plane, inliers)
+        val verticalSpan = inliers.maxOf { it.position.y } - inliers.minOf { it.position.y }
+        return PlaneFit(
+            plane,
+            inliers,
+            fitConfidence(inliers, plane, horizontalSpan, verticalSpan),
+        )
     }
+
+    private fun fitConfidence(
+        samples: List<TrackedPoint>,
+        plane: DepthPlane,
+        horizontalSpan: Float,
+        verticalSpan: Float,
+    ): Float {
+        val residuals = samples.map {
+            abs((it.position - plane.point).dot(plane.normal))
+        }.sorted()
+        val residualScore = (1f - residuals[residuals.size / 2] /
+            INLIER_DISTANCE_METERS).coerceIn(0f, 1f)
+        val persistentScore = samples.count { it.seenFrames >= PERSISTENT_POINT_FRAMES }
+            .toFloat() / samples.size
+        val spanScore = minOf(
+            horizontalSpan / FULL_SPAN_METERS,
+            verticalSpan / FULL_SPAN_METERS,
+            1f,
+        )
+        val supportScore = (samples.size.toFloat() / FULL_SUPPORT_POINTS).coerceAtMost(1f)
+        return residualScore * RESIDUAL_WEIGHT +
+            planeLinearity(samples) * LINEARITY_WEIGHT +
+            persistentScore * PERSISTENCE_WEIGHT +
+            spanScore * SPAN_WEIGHT +
+            supportScore * SUPPORT_WEIGHT
+    }
+
+    private fun planeLinearity(samples: List<TrackedPoint>): Float {
+        val center = samples.map { it.position }.averageVec()
+        var xx = 0f
+        var xz = 0f
+        var zz = 0f
+        for (sample in samples) {
+            val x = sample.position.x - center.x
+            val z = sample.position.z - center.z
+            xx += x * x
+            xz += x * z
+            zz += z * z
+        }
+        val trace = xx + zz
+        if (trace <= 1e-6f) return 0f
+        val spread = sqrt((xx - zz) * (xx - zz) + 4f * xz * xz)
+        val major = (trace + spread) * 0.5f
+        val minor = (trace - spread) * 0.5f
+        return (1f - minor / major.coerceAtLeast(1e-6f)).coerceIn(0f, 1f)
+    }
+
+    private fun viewFacing(plane: DepthPlane, cameraPosition: Vec3): Float =
+        abs(plane.normal.dot((cameraPosition - plane.point).normalized()))
 
     private fun refinePlane(samples: List<TrackedPoint>, seedNormal: Vec3): DepthPlane {
         val point = samples.map { it.position }.averageVec()
@@ -201,10 +282,13 @@ internal class WallFeaturePointPlaneProvider {
         const val MAX_SEEDS = 42
         const val MIN_INLIERS = 7
         const val MIN_VISIBLE_INLIERS = 5
+        const val PERSISTENT_POINT_FRAMES = 2
         const val MIN_CLUSTER_FRACTION = 0.14f
         const val MIN_CONFIDENCE = 0.25f
         const val MIN_DISTANCE_METERS = 0.30f
         const val MAX_DISTANCE_METERS = 5f
+        const val POSITION_HISTORY_WEIGHT = 0.65f
+        const val POSITION_UPDATE_WEIGHT = 0.35f
         const val SAMPLE_MIN = 0.18f
         const val SAMPLE_MAX = 0.82f
         const val MIN_SEED_SPAN_METERS = 0.10f
@@ -216,5 +300,15 @@ internal class WallFeaturePointPlaneProvider {
         const val VIEW_MARGIN = 0.04f
         const val FOCUS_CENTER = 0.5f
         const val MIN_RECT_SIZE = 0.16f
+        const val MIN_VIEW_FACING = 0.28f
+        const val FULL_SPAN_METERS = 0.50f
+        const val FULL_SUPPORT_POINTS = 24f
+        const val RESIDUAL_WEIGHT = 0.26f
+        const val LINEARITY_WEIGHT = 0.22f
+        const val PERSISTENCE_WEIGHT = 0.20f
+        const val SPAN_WEIGHT = 0.17f
+        const val SUPPORT_WEIGHT = 0.15f
+        const val FIT_CONFIDENCE_WEIGHT = 0.85f
+        const val FACING_CONFIDENCE_WEIGHT = 0.15f
     }
 }

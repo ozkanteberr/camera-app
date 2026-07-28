@@ -21,8 +21,14 @@ internal class WallDepthProbeProvider {
         val surface = detector.detect(frame, width, height) ?: return rejected("no_depth_patch")
         if (!isVertical(surface)) return rejected("non_vertical_patch")
         if (!isFocused(surface.normalizedRect)) return rejected("off_center_patch")
-        diagnostic = "accepted"
-        return WallObservation(surface, WallObservationSource.DEPTH_PATCH, nowMs)
+        val confidence = depthConfidence(surface.normalizedRect)
+        diagnostic = "accepted:q=${(confidence * 100f).toInt()}"
+        return WallObservation(
+            surface,
+            WallObservationSource.DEPTH_PATCH,
+            nowMs,
+            confidence,
+        )
     }
 
     fun reset() {
@@ -39,6 +45,14 @@ internal class WallDepthProbeProvider {
         rect[0] <= FOCUS_CENTER && rect[2] >= FOCUS_CENTER &&
         rect[1] <= FOCUS_CENTER && rect[3] >= FOCUS_CENTER
 
+    private fun depthConfidence(rect: FloatArray): Float {
+        val area = (rect[2] - rect[0]) * (rect[3] - rect[1])
+        return (BASE_CONFIDENCE + area * AREA_CONFIDENCE).coerceIn(
+            BASE_CONFIDENCE,
+            MAX_CONFIDENCE,
+        )
+    }
+
     private fun rejected(reason: String): WallObservation? {
         diagnostic = reason
         return null
@@ -47,5 +61,8 @@ internal class WallDepthProbeProvider {
     private companion object {
         const val MAX_NORMAL_Y = 0.72f
         const val FOCUS_CENTER = 0.5f
+        const val BASE_CONFIDENCE = 0.80f
+        const val AREA_CONFIDENCE = 0.35f
+        const val MAX_CONFIDENCE = 0.94f
     }
 }
