@@ -43,21 +43,35 @@ internal class WallSurfaceTracker {
     private data class LockedModel(
         val anchor: Anchor?,
         val localCorners: List<Vec3>,
+        val localMesh: List<Vec3>,
         val fallback: DepthSurface,
     )
 
     private val geometry = WallSurfaceGeometry()
+    private val coverage = WallSurfaceCoverage()
     private var model: Model? = null
     private var cachedSurface: DepthSurface? = null
     private var lockedModel: LockedModel? = null
     private var state = WallSurfaceState.SEARCHING
+    private var reacquireStreak = 0
+
+    val coverageCellCount: Int
+        get() = coverage.cellCount
 
     fun observeSurface(
         surface: DepthSurface,
         nowMs: Long,
         stableEvidence: Boolean,
+        coverageSurface: DepthSurface? = null,
     ): WallSurfaceUpdate {
         observe(surface, nowMs, stableEvidence)
+        if (stableEvidence && state == WallSurfaceState.STABLE && coverageSurface != null) {
+            model?.let { current ->
+                if (coverage.observe(current.plane, coverageSurface)) {
+                    cachedSurface = buildSurface(current)
+                }
+            }
+        }
         return current(nowMs)
     }
 
@@ -77,6 +91,7 @@ internal class WallSurfaceTracker {
         lockedModel = LockedModel(
             anchor = anchor,
             localCorners = surface.corners.map { it.positionVec() - center },
+            localMesh = surface.meshVertices.map { it.positionVec() - center },
             fallback = surface,
         )
         state = WallSurfaceState.LOCKED
@@ -86,6 +101,7 @@ internal class WallSurfaceTracker {
     fun unlock() {
         lockedModel?.anchor?.detach()
         lockedModel = null
+        reacquireStreak = 0
         state = if ((model?.confirmations ?: 0) >= STABLE_CONFIRMATIONS) {
             WallSurfaceState.STABLE
         } else {
@@ -105,6 +121,8 @@ internal class WallSurfaceTracker {
         lockedModel = null
         model = null
         cachedSurface = null
+        coverage.reset()
+        reacquireStreak = 0
         state = WallSurfaceState.SEARCHING
     }
 
@@ -131,6 +149,15 @@ internal class WallSurfaceTracker {
         }
 
         val observedPoints = surface.corners.map(Pose::positionVec)
+        if (state == WallSurfaceState.TEMPORARILY_LOST) {
+            if (!isConnected(current, observedPoints)) {
+                reacquireStreak = 0
+                return
+            }
+            reacquireStreak++
+            if (reacquireStreak < REACQUIRE_CONFIRMATIONS) return
+            reacquireStreak = 0
+        }
         if (current.confirmations < STABLE_CONFIRMATIONS &&
             (stableEvidence || planeChanged(current.plane, surface.plane))
         ) {
@@ -182,6 +209,7 @@ internal class WallSurfaceTracker {
         lockedSurface()?.let { return WallSurfaceUpdate(it, WallSurfaceState.LOCKED) }
         val current = model ?: return WallSurfaceUpdate(null, WallSurfaceState.SEARCHING)
         if (nowMs - current.lastEvidenceAtMs > LOST_AFTER_MS) {
+            if (state != WallSurfaceState.TEMPORARILY_LOST) reacquireStreak = 0
             state = WallSurfaceState.TEMPORARILY_LOST
         }
         return WallSurfaceUpdate(renderSurface(), state)
@@ -265,13 +293,23 @@ internal class WallSurfaceTracker {
 
     private fun buildSurface(current: Model): DepthSurface {
         val p = current.plane.point
+        val covered = if (current.confirmations >= STABLE_CONFIRMATIONS) coverage.snapshot() else null
+        val minX = covered?.minX ?: current.minX
+        val maxX = covered?.maxX ?: current.maxX
+        val minY = covered?.minY ?: current.minY
+        val maxY = covered?.maxY ?: current.maxY
         val corners = listOf(
-            p + current.axisX * current.minX + current.axisY * current.maxY,
-            p + current.axisX * current.maxX + current.axisY * current.maxY,
-            p + current.axisX * current.maxX + current.axisY * current.minY,
-            p + current.axisX * current.minX + current.axisY * current.minY,
+            p + current.axisX * minX + current.axisY * maxY,
+            p + current.axisX * maxX + current.axisY * maxY,
+            p + current.axisX * maxX + current.axisY * minY,
+            p + current.axisX * minX + current.axisY * minY,
         ).map { Pose.makeTranslation(it.x, it.y, it.z) }
-        return DepthSurface(current.plane, current.lastRect.copyOf(), corners)
+        return DepthSurface(
+            current.plane,
+            current.lastRect.copyOf(),
+            corners,
+            covered?.meshVertices ?: emptyList(),
+        )
     }
 
     private fun lockedSurface(): DepthSurface? {
@@ -281,12 +319,16 @@ internal class WallSurfaceTracker {
         val corners = locked.localCorners.map { offset ->
             anchor.pose.compose(Pose.makeTranslation(offset.x, offset.y, offset.z))
         }
+        val mesh = locked.localMesh.map { offset ->
+            anchor.pose.compose(Pose.makeTranslation(offset.x, offset.y, offset.z))
+        }
         val positions = corners.map(Pose::positionVec)
         val normal = cross(positions[1] - positions[0], positions[3] - positions[0]).normalized()
         return DepthSurface(
             DepthPlane(positions.averageVec(), normal),
             locked.fallback.normalizedRect,
             corners,
+            mesh,
         )
     }
 
@@ -338,6 +380,7 @@ internal class WallSurfaceTracker {
         const val COMPATIBLE_DISTANCE_METERS = 0.15f
         const val REBASE_NORMAL_DOT = 0.9995f
         const val REBASE_DISTANCE_METERS = 0.01f
+        const val REACQUIRE_CONFIRMATIONS = 2
         const val MAX_JOIN_GAP_METERS = 0.28f
         const val EDGE_PADDING_METERS = 0.035f
         const val MIN_INITIAL_SIZE_METERS = 0.16f

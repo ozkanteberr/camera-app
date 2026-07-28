@@ -18,6 +18,7 @@ internal data class DepthSurface(
     val plane: DepthPlane,
     val normalizedRect: FloatArray,
     val corners: List<Pose>,
+    val meshVertices: List<Pose> = emptyList(),
 )
 
 internal data class Vec3(val x: Float, val y: Float, val z: Float) {

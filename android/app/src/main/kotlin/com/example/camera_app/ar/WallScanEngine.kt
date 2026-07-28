@@ -14,6 +14,7 @@ internal class WallScanEngine {
     private val surfaceTracker = WallSurfaceTracker()
     private val depthProvider = WallDepthProbeProvider()
     private val featurePointProvider = WallFeaturePointPlaneProvider()
+    private val boundaryProvider = WallLumaBoundaryProvider()
     private val consensus = WallPlaneConsensus()
     private val geometry = WallSurfaceGeometry()
     private var lastDiagnostic = ""
@@ -59,11 +60,25 @@ internal class WallScanEngine {
         val update = if (result == null) {
             surfaceTracker.advance(nowMs)
         } else {
-            val observedSurface = growthSurface(frame, width, height, result)
+            val growth = focusGrowthSurface(frame, width, height, result)
+            val observedSurface = growth?.let {
+                result.observation.surface.copy(
+                    corners = result.observation.surface.corners + it.corners,
+                )
+            } ?: result.observation.surface
+            val coverageSurface = when (result.observation.source) {
+                WallObservationSource.ARCORE_PLANE -> growth
+                else -> when {
+                    growth == null -> null
+                    surfaceTracker.coverageCellCount == 0 -> observedSurface
+                    else -> growth
+                }
+            }
             surfaceTracker.observeSurface(
                 observedSurface,
                 result.observation.observedAtMs,
                 result.stable,
+                coverageSurface,
             )
         }
         reportDiagnostics(update, result, depthSupported, verticalPlanes.size, nowMs)
@@ -88,6 +103,7 @@ internal class WallScanEngine {
         surfaceTracker.reset()
         depthProvider.reset()
         featurePointProvider.reset()
+        boundaryProvider.reset()
         consensus.reset()
         lastDiagnostic = ""
         lastDiagnosticAtMs = 0L
@@ -95,23 +111,21 @@ internal class WallScanEngine {
         lastConsensusResult = null
     }
 
-    private fun growthSurface(
+    private fun focusGrowthSurface(
         frame: Frame,
         width: Int,
         height: Int,
         result: WallConsensusResult,
-    ): DepthSurface {
+    ): DepthSurface? {
         val observation = result.observation
         if (!result.stable || !supportsFocusedGrowth(frame, width, height, observation)) {
-            return observation.surface
+            return null
         }
-        val footprint = geometry.fromViewRect(
+        val growthRect = boundaryProvider.refine(frame, FOCUS_GROWTH_RECT)
+        return geometry.fromViewRect(
             frame.camera,
-            FOCUS_GROWTH_RECT,
+            growthRect,
             observation.surface.plane,
-        ) ?: return observation.surface
-        return observation.surface.copy(
-            corners = observation.surface.corners + footprint.corners,
         )
     }
 
@@ -175,8 +189,10 @@ internal class WallScanEngine {
         val agreement = ((result?.normalAgreement ?: 0f) * 100f).toInt()
         val diagnostic = "state=${update.state.wireValue} depth=$depthSupported " +
             "probe=${depthProvider.diagnostic} features=${featurePointProvider.diagnostic} " +
+            "boundary=${boundaryProvider.diagnostic} " +
             "source=$source confidence=$confidence agreement=$agreement confirmations=$confirmations " +
-            "verticalPlanes=$verticalPlaneCount surface=${update.surface != null}"
+            "verticalPlanes=$verticalPlaneCount cells=${surfaceTracker.coverageCellCount} " +
+            "surface=${update.surface != null}"
         if (diagnostic == lastDiagnostic && nowMs - lastDiagnosticAtMs < LOG_INTERVAL_MS) return
         lastDiagnostic = diagnostic
         lastDiagnosticAtMs = nowMs
